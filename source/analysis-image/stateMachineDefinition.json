@@ -1,0 +1,36 @@
+{
+    "StartAt": "Start and wait custom labels model",
+    "States": {
+        "Start and wait custom labels model": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::states:startExecution.sync",
+            "Parameters": {
+                "Input": {
+                    "input.$": "$.input",
+                    "output.$": "$.output"
+                },
+                "StateMachineArn": "${CustomLabelsStartModelStateMachine}"
+            },
+            "Next": "Detect custom labels"
+        },
+        "Detect custom labels": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "detect-custom-labels",
+                "nestedStateOutput.$": "$"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 4,
+                    "BackoffRate": 1.1
+                }
+            ],
+            "End": true
+        }
+    }
+}

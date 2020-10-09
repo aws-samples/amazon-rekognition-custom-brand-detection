@@ -1,0 +1,19 @@
+{
+  "name": "ffmpeg",
+  "version": "4.3.0",
+  "description": "(Custom Brand Detection) ffmpeg (LGPL 2.1 version) lambda layer",
+  "main": "index.js",
+  "private": true,
+  "license": "LGPL-2.1",
+  "dependencies": {},
+  "scripts": {
+    "pretest": "npm install",
+    "test": "wrapper of ffmpeg binaries. skip unit test...",
+    "build:clean": "rm -rf dist && mkdir -p dist/nodejs/node_modules/ffmpeg",
+    "build:copy": "cp -v build-ffmpeg-lgpl.sh dist && cp -v index.js package.json LICENSE-LGPLv2.1.txt dist/nodejs/node_modules/ffmpeg",
+    "build:install": "cd dist/nodejs/node_modules/ffmpeg && npm install --production",
+    "build": "npm-run-all -s build:clean build:copy build:install",
+    "zip": "cd dist && zip -rq --symlinks"
+  },
+  "devDependencies": {}
+}

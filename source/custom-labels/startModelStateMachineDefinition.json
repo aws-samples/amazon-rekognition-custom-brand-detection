@@ -1,0 +1,114 @@
+{
+    "StartAt": "Check model status",
+    "States": {
+        "Check model status": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "check-model-status",
+                "input.$": "$.input",
+                "output.$": "$.output"
+            },
+            "Next": "Model started?",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 1.2
+                }
+            ]
+        },
+        "Model started?": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Variable": "$.output['check-model-status'].status",
+                    "StringEquals": "RUNNING",
+                    "Next": "Model started"
+                },
+                {
+                    "Or": [
+                        {
+                            "Variable": "$.output['check-model-status'].status",
+                            "StringEquals": "TRAINING_FAILED"
+                        },
+                        {
+                            "Variable": "$.output['check-model-status'].status",
+                            "StringEquals": "FAILED"
+                        },
+                        {
+                            "Variable": "$.output['check-model-status'].status",
+                            "StringEquals": "DELETING"
+                        }
+                    ],
+                    "Next": "Model failed"
+                },
+                {
+                    "Or": [
+                        {
+                            "Variable": "$.output['check-model-status'].status",
+                            "StringEquals": "TRAINING_COMPLETED"
+                        },
+                        {
+                            "Variable": "$.output['check-model-status'].status",
+                            "StringEquals": "STOPPED"
+                        }
+                    ],
+                    "Next": "Start project version"
+                }
+            ],
+            "Default": "Wait for model status (3mins)"
+        },
+        "Wait for model status (3mins)": {
+            "Type": "Wait",
+            "Seconds": 180,
+            "Next": "Check model status"
+        },
+        "Start project version": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "start-project-version",
+                "input.$": "$.input",
+                "output.$": "$.output"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 1.2
+                }
+            ],
+            "Next": "Check model status"
+        },
+        "Model started": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "project-version-started",
+                "input.$": "$.input",
+                "output.$": "$.output"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 1.2
+                }
+            ],
+            "End": true
+        },
+        "Model failed": {
+            "Type": "Fail"
+        }
+    }
+}

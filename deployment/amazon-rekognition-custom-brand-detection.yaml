@@ -1,0 +1,4483 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: Amazon Rekognition Custom Brand Detection - demonstrates how to use Amazon SageMaker Ground Truth and Amazon Rekognition Custom Labels to prepare and train a machine learning model to detection custom brand(s).
+
+Mappings:
+    Solution:
+        Project:
+            Id: "%SID%"
+            LowerCaseId: "%SMALLCAP_SID%"
+            Version: "%VERSION%"
+        Template:
+            S3Bucket: "%BUCKET%"
+            KeyPrefix: "%KEYPREFIX%"
+            SingleRegion: "%SINGLE_REGION%"
+        Package:
+            CustomResourceX: "%PKG_CUSTOM_RESOURCES%"
+            GTLabelingJob: "%PKG_GT_LABELING_STEP%"
+            CustomLabels: "%PKG_CUSTOM_LABELS_STEP%"
+            StatusUpdater: "%PKG_STATUS_UPDATER%"
+            Analysis: "%PKG_ANALYSIS_STEP%"
+            ImageAnalysis: "%PKG_IMAGE_ANALYSIS_STEP%"
+            VideoAnalysis: "%PKG_VIDEO_ANALYSIS_STEP%"
+            ModelTimerStream: "%PKG_MODEL_TIMER_STREAM%"
+            WebApp: "%PKG_WEBAPP%"
+        Layer:
+            AwsSdk: "%LAYER_AWSSDK%"
+            CoreLib: "%LAYER_CORE_LIB%"
+            Canvas: "%LAYER_CANVAS%"
+        Stack:
+            WebApp: "cfn-webapp-stack.template"
+            CodeBuildFFmpeg: "cfn-codebuild-ffmpeg-stack.template"
+    Workflow:
+        ModelTimerStream:
+            Name: "model-timer-stream"
+        CustomLabels:
+            Name: "custom-labels"
+        LabelingJob:
+            Name: "gt-labeling-job"
+        ImageAnalysis:
+            Name: "analysis-image"
+        VideoAnalysis:
+            Name: "analysis-video"
+        Analysis:
+            Name: "analysis"
+        StateUpdater:
+            Name: "labeling-job-status-updater"
+    DynamoDB:
+        ServiceToken:
+            PartitionKey: id
+            SortKey: keyword
+        ModelTimer:
+            PartitionKey: projectVersionArn
+    SNS:
+        PrivateWorkforceTopic:
+            DisplayName: LabelingGT
+    Node:
+        Runtime:
+            Version: nodejs10.x
+
+Parameters:
+    AgreeFFmpegUse:
+        Type: String
+        Description: >
+            The solution uses FFmpeg under the LGPLv2.1 license. The CloudFormation template provided herein will retrieve several third-party libraries, environments, and/or other software packages at install-time or build-time ("External Dependencies") from third-party sources.
+            There are terms and conditions that you need to agree to abide by if you choose to install the External Dependencies. If you do not agree with every term and condition associated with the External Dependencies, select "NO, DO NOT INSTALL".
+            Provided below is a list of External Dependencies and the applicable license identification as indicated by the documentation associated with the External Dependencies as of Amazon's most recent review.
+            Please review FFmpeg license, https://github.com/FFmpeg/FFmpeg/blob/master/COPYING.LGPLv2.1.
+            THIS INFORMATION IS PROVIDED FOR CONVENIENCE ONLY. AMAZON DOES NOT PROMISE THAT THE LIST OR THE APPLICABLE TERMS AND CONDITIONS ARE COMPLETE, ACCURATE, OR UP-TO-DATE, AND AMAZON WILL HAVE NO LIABILITY FOR ANY INACCURACIES. YOU SHOULD CONSULT THE DOWNLOAD SITES FOR THE EXTERNAL DEPENDENCIES FOR THE MOST COMPLETE AND UP-TO-DATE LICENSING INFORMATION.   YOUR USE OF THE EXTERNAL DEPENDENCIES IS AT YOUR SOLE RISK. IN NO EVENT WILL AMAZON BE LIABLE FOR ANY DAMAGES, INCLUDING WITHOUT LIMITATION ANY DIRECT, INDIRECT, CONSEQUENTIAL, SPECIAL, INCIDENTAL, OR PUNITIVE DAMAGES (INCLUDING FOR ANY LOSS OF GOODWILL, BUSINESS INTERRUPTION, LOST PROFITS OR DATA, OR COMPUTER FAILURE OR MALFUNCTION) ARISING FROM OR RELATING TO THE EXTERNAL DEPENDENCIES, HOWEVER CAUSED AND REGARDLESS OF THE THEORY OF LIABILITY, EVEN IF AMAZON HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. THESE LIMITATIONS AND DISCLAIMERS APPLY EXCEPT TO THE EXTENT PROHIBITED BY APPLICABLE LAW.
+        AllowedValues:
+            - "AGREE AND INSTALL"
+            - "NO, DO NOT INSTALL"
+        Default: "NO, DO NOT INSTALL"
+    CreateWebPortal:
+        Type: String
+        Description: select 'YES' to create web portal, Amazon API Gateway, and Amazon CloudFront distribution
+        AllowedValues:
+            - "YES"
+            - "NO"
+        Default: "YES"
+    Email:
+        Type: String
+        Description: "Email address of the user that will be created in the Amazon Cognito Identity Pool and subscribed to the Amazon SNS topic. Subscribed users will receive ingest, publishing, and error notifications. After launch, two emails will be sent to this address: one with instructions for logging in to the web interface and one confirming the SNS subscription."
+        AllowedPattern: '[^\s@]+@[^\s@]+\.[^\s@]+'
+    PriceClass:
+        Type: String
+        Description: "Specify the price class of the edge location from which CloudFront serves your requests. For more information, see https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/PriceClass.html"
+        AllowedValues:
+            - Use Only U.S., Canada and Europe [PriceClass_100]
+            - Use U.S., Canada, Europe, Asia and Africa [PriceClass_200]
+            - Use All Edge Locations (Best Performance) [PriceClass_All]
+        Default: Use Only U.S., Canada and Europe [PriceClass_100]
+
+Metadata:
+    AWS::CloudFormation::Interface:
+        ParameterGroups:
+            -
+                Label:
+                    default: "External Dependencies"
+                Parameters:
+                    - AgreeFFmpegUse
+            -
+                Label:
+                    default: "Web Demo Portal Configuration"
+                Parameters:
+                    - CreateWebPortal
+                    - Email
+                    - PriceClass
+        ParameterLabels:
+            AgreeFFmpegUse:
+                default: FFmpeg Component
+            CreateWebPortal:
+                default: Create Web Demo Portal?
+            Email:
+                default: "Email"
+            PriceClass:
+                default: "Price Class"
+
+Conditions:
+    bSingleRegion: !Equals [
+        !FindInMap [
+            "Solution",
+            "Template",
+            "SingleRegion"
+        ],
+        "true"
+    ]
+    bCreateWebPortal: !Equals [
+        !Ref CreateWebPortal,
+        "YES"
+    ]
+    bEmail: !Not [
+        !Equals [
+            !Ref Email,
+            ""
+        ]
+    ]
+    bRegisterUser: !And [
+        !Condition bCreateWebPortal,
+        !Condition bEmail
+    ]
+
+Resources:
+    ################################################################################
+    #
+    # CloudFormation Custom Resource lambda
+    # * Used during Stack create, update, and delete
+    #
+    ################################################################################
+    CustomResourceRole:
+        Type: AWS::IAM::Role
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W11
+                        reason: This wildcard is present as the custom resource lambda needs to be able to access contents within the bucket!
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Action: "sts:AssumeRole"
+                        Principal:
+                            Service: "lambda.amazonaws.com"
+            Path: !Sub [
+                "/${x0}/", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${x1}-custom-brand-detection-custom-resources", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ],
+                            x1: !Select [
+                                4,
+                                !Split [
+                                    "-",
+                                    !Select [
+                                        2,
+                                        !Split [
+                                            "/",
+                                            !Sub "${AWS::StackId}"
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                            ## S3
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "s3:ListBucket"
+                                    - "s3:GetBucketCORS"
+                                    - "s3:PutBucketCORS"
+                                # This wildcard is present because of circular dependency where
+                                # the buckets aren't known before this custom resource lambda function
+                                # is created.
+                                Resource: !Sub [
+                                    "arn:aws:s3:::${x0}-${x1}-${AWS::AccountId}-${AWS::Region}-*", {
+                                        x0: !FindInMap [
+                                            "Solution",
+                                            "Project",
+                                            "LowerCaseId"
+                                        ],
+                                        x1: !Select [
+                                            4,
+                                            !Split [
+                                                "-",
+                                                !Select [
+                                                    2,
+                                                    !Split [
+                                                        "/",
+                                                        !Sub "${AWS::StackId}"
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    }
+                                ]
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "s3:GetObject"
+                                    - "s3:PutObject"
+                                    - "s3:DeleteObject"
+                                Resource: !Sub [
+                                    "arn:aws:s3:::${x0}-${x1}-${AWS::AccountId}-${AWS::Region}-*/*", {
+                                        x0: !FindInMap [
+                                            "Solution",
+                                            "Project",
+                                            "LowerCaseId"
+                                        ],
+                                        x1: !Select [
+                                            4,
+                                            !Split [
+                                                "-",
+                                                !Select [
+                                                    2,
+                                                    !Split [
+                                                        "/",
+                                                        !Sub "${AWS::StackId}"
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    }
+                                ]
+                            -
+                                Effect: "Allow"
+                                Action: "s3:GetObject"
+                                Resource: !Sub [
+                                    "arn:aws:s3:::${x0}${x1}/${x2}/${x3}", {
+                                        x0: !FindInMap [
+                                            "Solution",
+                                            "Template",
+                                            "S3Bucket"
+                                        ],
+                                        x1: !If [
+                                            bSingleRegion,
+                                            "",
+                                            !Sub "-${AWS::Region}"
+                                        ],
+                                        x2: !FindInMap [
+                                            "Solution",
+                                            "Template",
+                                            "KeyPrefix"
+                                        ],
+                                        x3: !FindInMap [
+                                            "Solution",
+                                            "Package",
+                                            "WebApp"
+                                        ]
+                                    }
+                                ]
+                            ## CloudWatch Logs
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "logs:CreateLogGroup"
+                                    - "logs:CreateLogStream"
+                                    - "logs:PutLogEvents"
+                                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+                            ## MediaConvert
+                            -
+                                Effect: "Allow"
+                                Action: "mediaConvert:DescribeEndpoints"
+                                Resource: !Sub "arn:aws:mediaconvert:${AWS::Region}:${AWS::AccountId}:*"
+                            ## Cognito for SageMaker Ground Truth Private Workforce
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "cognito-idp:AdminCreateUser"
+                                    - "cognito-idp:CreateGroup"
+                                    - "cognito-idp:DeleteGroup"
+                                    - "cognito-idp:UpdateUserPool"
+                                    - "cognito-idp:UpdateUserPoolClient"
+                                    # Testing
+                                    - "cognito-idp:CreateUserPool"
+                                    - "cognito-idp:CreateUserPoolClient"
+                                    - "cognito-idp:DeleteUserPool"
+                                    - "cognito-idp:DeleteUserPoolClient"
+                                    - "cognito-idp:DescribeUserPool"
+                                    - "cognito-idp:DescribeUserPoolClient"
+                                Resource: !Sub "arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*"
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "cognito-idp:CreateUserPoolDomain"
+                                    - "cognito-idp:DeleteUserPoolDomain"
+                                    - "cognito-idp:DescribeUserPoolDomain"
+                                Resource: !Join ["", ["*"]]
+                            ## SageMaker
+                            -
+                                Effect: "Allow"
+                                Action: "sagemaker:ListWorkteams"
+                                Resource: !Join ["", ["*"]]
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "sagemaker:CreateWorkteam"
+                                    - "sagemaker:DescribeWorkteam"
+                                    - "sagemaker:DeleteWorkteam"
+                                Resource: !Sub [
+                                    "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:workteam/${x0}-${x1}-*", {
+                                        x0: !FindInMap [
+                                            "Solution",
+                                            "Project",
+                                            "LowerCaseId"
+                                        ],
+                                        x1: !Select [
+                                            4,
+                                            !Split [
+                                                "-",
+                                                !Select [
+                                                    2,
+                                                    !Split [
+                                                        "/",
+                                                        !Sub "${AWS::StackId}"
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    }
+                                ]
+                            ## IAM - required by AdminCreateUser
+                            -
+                                Effect: "Allow"
+                                Action: "iam:PassRole"
+                                Resource: !Sub [
+                                    "arn:aws:iam::${AWS::AccountId}:role/${x0}/${AWS::StackName}-CustomResourceRole-*", {
+                                        x0: !FindInMap [
+                                            "Solution",
+                                            "Project",
+                                            "LowerCaseId"
+                                        ]
+                                    }
+                                ]
+
+    CustomResourceLambda:
+        Type: AWS::Lambda::Function
+        Properties:
+            Description: !Sub [
+                "(${x0}) object detection custom resources", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            Runtime: !FindInMap [
+                "Node",
+                "Runtime",
+                "Version"
+            ]
+            MemorySize: 256
+            Timeout: 900
+            Handler: index.handler
+            Role: !GetAtt CustomResourceRole.Arn
+            Code:
+                S3Bucket: !Sub [
+                    "${x0}${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "S3Bucket"
+                        ],
+                        x1: !If [
+                            bSingleRegion,
+                            "",
+                            !Sub "-${AWS::Region}"
+                        ]
+                    }
+                ]
+                S3Key: !Sub [
+                    "${x0}/${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "KeyPrefix"
+                        ],
+                        x1: !FindInMap [
+                            "Solution",
+                            "Package",
+                            "CustomResourceX"
+                        ]
+                    }
+                ]
+
+    ShouldUseFFmpeg:
+        Type: Custom::ShouldUseFFmpeg
+        Properties:
+            ServiceToken: !GetAtt CustomResourceLambda.Arn
+            Data:
+                AgreeFFmpegUse: !Ref AgreeFFmpegUse
+
+    ################################################################################
+    #
+    # Bucket resources
+    # * Logs and Source (to store training and processing images)
+    #
+    ################################################################################
+    LogsBucket:
+        DependsOn: ShouldUseFFmpeg
+        Type: AWS::S3::Bucket
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W35
+                        reason: "This is the Logs bucket. Ignore access logging configuration"
+        DeletionPolicy: Retain
+        UpdateReplacePolicy: Retain
+        Properties:
+            BucketName: !Sub [
+                "${x0}-${x1}-${AWS::AccountId}-${AWS::Region}-logs", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            BucketEncryption:
+                ServerSideEncryptionConfiguration:
+                    -
+                      ServerSideEncryptionByDefault:
+                          SSEAlgorithm: AES256
+            AccessControl: LogDeliveryWrite
+            LifecycleConfiguration:
+                Rules:
+                    -
+                        Id: Keep access logs for 30 days
+                        Status: Enabled
+                        Prefix: /
+                        ExpirationInDays: 30
+                        AbortIncompleteMultipartUpload:
+                            DaysAfterInitiation: 1
+            Tags:
+                -
+                    Key: SolutionId
+                    Value: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+            VersioningConfiguration:
+                Status: Enabled
+
+    LogsBucketPolicy:
+        Type: AWS::S3::BucketPolicy
+        Properties:
+            Bucket: !Ref LogsBucket
+            PolicyDocument:
+                Statement:
+                    -
+                        Effect: Deny
+                        Principal: "*"
+                        Action: "*"
+                        Resource: !Sub "arn:aws:s3:::${LogsBucket}/*"
+                        Condition:
+                            Bool:
+                                "aws:SecureTransport": false
+
+    SourceBucket:
+        DependsOn: ShouldUseFFmpeg
+        Type: AWS::S3::Bucket
+        DeletionPolicy: Retain
+        UpdateReplacePolicy: Retain
+        Properties:
+            BucketName: !Sub [
+                "${x0}-${x1}-${AWS::AccountId}-${AWS::Region}-source", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            BucketEncryption:
+                ServerSideEncryptionConfiguration:
+                    -
+                      ServerSideEncryptionByDefault:
+                          SSEAlgorithm: AES256
+            AccelerateConfiguration:
+                AccelerationStatus: Enabled
+            AccessControl: LogDeliveryWrite
+            LoggingConfiguration:
+                DestinationBucketName: !Ref LogsBucket
+                LogFilePrefix: "access_logs_source_bucket/"
+            CorsConfiguration:
+                CorsRules:
+                    -
+                        AllowedMethods:
+                            - HEAD
+                            - GET
+                            - PUT
+                            - POST
+                        AllowedOrigins:
+                            - "*"
+                        AllowedHeaders:
+                            - "*"
+                        ExposedHeaders:
+                            - ETag
+                            - "Content-Length"
+                        MaxAge: 3000
+            LifecycleConfiguration:
+                Rules:
+                    -
+                        Id: Use Intelligent tier
+                        Status: Enabled
+                        Transitions:
+                            -
+                                StorageClass: INTELLIGENT_TIERING
+                                TransitionInDays: 0
+                        AbortIncompleteMultipartUpload:
+                            DaysAfterInitiation: 7
+                    -
+                        Id: Keep previous version for 7 days
+                        Status: Enabled
+                        NoncurrentVersionExpirationInDays: 7
+                        AbortIncompleteMultipartUpload:
+                            DaysAfterInitiation: 1
+            Tags:
+                -
+                    Key: SolutionId
+                    Value: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+            VersioningConfiguration:
+                Status: Enabled
+
+    SourceBucketPolicy:
+        Type: AWS::S3::BucketPolicy
+        Properties:
+            Bucket: !Ref SourceBucket
+            PolicyDocument:
+                Statement:
+                    -
+                        Effect: Deny
+                        Principal: "*"
+                        Action: "*"
+                        Resource: !Sub "arn:aws:s3:::${SourceBucket}/*"
+                        Condition:
+                            Bool:
+                                "aws:SecureTransport": false
+                    # Amazon Rekognition Custom Labels specific
+                    -
+                        Effect: Allow
+                        Principal:
+                            Service: "rekognition.amazonaws.com"
+                        Action:
+                            - "s3:GetBucketAcl"
+                            - "s3:GetBucketLocation"
+                        Resource: !Sub "arn:aws:s3:::${SourceBucket}"
+                    -
+                        Effect: Allow
+                        Principal:
+                            Service: "rekognition.amazonaws.com"
+                        Action:
+                            - "s3:GetObject"
+                            - "s3:GetObjectAcl"
+                            - "s3:GetObjectVersion"
+                            - "s3:GetObjectTagging"
+                        Resource: !Sub "arn:aws:s3:::${SourceBucket}/*"
+                    -
+                        Effect: Allow
+                        Principal:
+                            Service: "rekognition.amazonaws.com"
+                        Action: "s3:PutBucketAcl"
+                        Resource: !Sub "arn:aws:s3:::${SourceBucket}"
+                    -
+                        Effect: Allow
+                        Principal:
+                            Service: "rekognition.amazonaws.com"
+                        Action: "s3:PutObject"
+                        Resource: !Sub "arn:aws:s3:::${SourceBucket}/*"
+                        Condition:
+                            StringEquals:
+                                "s3:x-amz-acl": "bucket-owner-full-control"
+
+
+    ################################################################################
+    #
+    # CodeBuild FFmpeg stack
+    # * Build FFmpeg LGPL v2.1 on the fly
+    #
+    ################################################################################
+    CodeBuildFFmpegStack:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: !Sub [
+                "https://${x0}${x1}.s3.amazonaws.com/${x2}/${x3}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Template",
+                        "S3Bucket"
+                    ],
+                    x1: !If [
+                        bSingleRegion,
+                        "",
+                        !Sub "-${AWS::Region}"
+                    ],
+                    x2: !FindInMap [
+                        "Solution",
+                        "Template",
+                        "KeyPrefix"
+                    ],
+                    x3: !FindInMap [
+                        "Solution",
+                        "Stack",
+                        "CodeBuildFFmpeg"
+                    ]
+                }
+            ]
+            Parameters:
+                RootStackId: !Select [
+                    4,
+                    !Split [
+                        "-",
+                        !Select [
+                            2,
+                            !Split [
+                                "/",
+                                !Sub "${AWS::StackId}"
+                            ]
+                        ]
+                    ]
+                ]
+                SourceBucket: !Ref SourceBucket
+
+
+    ################################################################################
+    #
+    # Amazon Lambda Layers
+    # * AWS SDK
+    # * Core Library
+    # * FFmpeg
+    # * Canvas Library
+    #
+    ################################################################################
+    AwsSdkLayer:
+        Type: AWS::Lambda::LayerVersion
+        Properties:
+            LayerName: !Sub [
+                "${x0}-${x1}-layer-aws-sdk", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            CompatibleRuntimes:
+                - nodejs10.x
+                - nodejs12.x
+            Content:
+                S3Bucket: !Sub [
+                    "${x0}${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "S3Bucket"
+                        ],
+                        x1: !If [
+                            bSingleRegion,
+                            "",
+                            !Sub "-${AWS::Region}"
+                        ]
+                    }
+                ]
+                S3Key: !Sub [
+                    "${x0}/${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "KeyPrefix"
+                        ],
+                        x1: !FindInMap [
+                            "Solution",
+                            "Layer",
+                            "AwsSdk"
+                        ]
+                    }
+                ]
+            Description: !Sub [
+                "${x0} ${AWS::StackName} aws-sdk layer", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            LicenseInfo: MIT-0
+
+    CoreLibLayer:
+        Type: AWS::Lambda::LayerVersion
+        Properties:
+            LayerName: !Sub [
+                "${x0}-${x1}-layer-core-lib", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            CompatibleRuntimes:
+                - nodejs10.x
+                - nodejs12.x
+            Content:
+                S3Bucket: !Sub [
+                    "${x0}${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "S3Bucket"
+                        ],
+                        x1: !If [
+                            bSingleRegion,
+                            "",
+                            !Sub "-${AWS::Region}"
+                        ]
+                    }
+                ]
+                S3Key: !Sub [
+                    "${x0}/${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "KeyPrefix"
+                        ],
+                        x1: !FindInMap [
+                            "Solution",
+                            "Layer",
+                            "CoreLib"
+                        ]
+                    }
+                ]
+            Description: !Sub [
+                "${x0} ${AWS::StackName} core library layer", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            LicenseInfo: MIT-0
+
+    FFmpegLayer:
+        Type: AWS::Lambda::LayerVersion
+        Properties:
+            LayerName: !Sub [
+                "${x0}-${x1}-layer-ffmpeg-lgpl2_1", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            CompatibleRuntimes:
+                - nodejs10.x
+                - nodejs12.x
+            Content:
+                S3Bucket: !GetAtt CodeBuildFFmpegStack.Outputs.FFmpegLayerBucket
+                S3Key: !GetAtt CodeBuildFFmpegStack.Outputs.FFmpegLayerKey
+            Description: !Sub [
+                "${x0} ${AWS::StackName} ffmpeg (lgpl v2.1) layer", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            LicenseInfo: LGPL-v2.1
+
+    CanvasLayer:
+        Type: AWS::Lambda::LayerVersion
+        Properties:
+            LayerName: !Sub [
+                "${x0}-${x1}-layer-canvas", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            CompatibleRuntimes:
+                - nodejs10.x
+                - nodejs12.x
+            Content:
+                S3Bucket: !Sub [
+                    "${x0}${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "S3Bucket"
+                        ],
+                        x1: !If [
+                            bSingleRegion,
+                            "",
+                            !Sub "-${AWS::Region}"
+                        ]
+                    }
+                ]
+                S3Key: !Sub [
+                    "${x0}/${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "KeyPrefix"
+                        ],
+                        x1: !FindInMap [
+                            "Solution",
+                            "Layer",
+                            "Canvas"
+                        ]
+                    }
+                ]
+            Description: !Sub [
+                "${x0} ${AWS::StackName} canvas layer", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            LicenseInfo: MIT
+
+
+    ################################################################################
+    #
+    # Amazon DynamoDB
+    # * a DynamoDB table is used by the workflow to temporarily store Amazon Step
+    #   Functions state token such that we can use Service Integration technique
+    #   to send event to the state machine when Rekognition Segment detection is
+    #   completed.
+    #
+    ################################################################################
+    ServiceTokenTable:
+        Type: AWS::DynamoDB::Table
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W28
+                        reason: "Table uses explicit name such that the items won't get destroy during stack update"
+        Properties:
+            TableName: !Sub [
+                "${x0}-${x1}-service-token", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            BillingMode: "PAY_PER_REQUEST"
+            AttributeDefinitions:
+                -
+                    AttributeName: !FindInMap [
+                        "DynamoDB",
+                        "ServiceToken",
+                        "PartitionKey"
+                    ]
+                    AttributeType: "S"
+                -
+                    AttributeName: !FindInMap [
+                        "DynamoDB",
+                        "ServiceToken",
+                        "SortKey"
+                    ]
+                    AttributeType: "S"
+            KeySchema:
+                -
+                    AttributeName: !FindInMap [
+                        "DynamoDB",
+                        "ServiceToken",
+                        "PartitionKey"
+                    ]
+                    KeyType: HASH
+                -
+                    AttributeName: !FindInMap [
+                        "DynamoDB",
+                        "ServiceToken",
+                        "SortKey"
+                    ]
+                    KeyType: RANGE
+            SSESpecification:
+                SSEEnabled: true
+            PointInTimeRecoverySpecification:
+                PointInTimeRecoveryEnabled: true
+            TimeToLiveSpecification:
+                AttributeName: ttl
+                Enabled: true
+
+    ################################################################################
+    #
+    # Amazon Cognito for Amazon SageMaker GroundTruth Private Workforce
+    # * Cognito User Pool
+    # * Cognito User Group
+    # * Cognito App Client
+    # * SNS Topic to notify labeling workers when new job is ready
+    # * Custom Resource to create and bind workteam to SageMaker Ground Truth
+    #
+    ################################################################################
+    PrivateWorkforceUserPool:
+        Type: AWS::Cognito::UserPool
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: F78
+                        reason: "Suppress MfaConfiguration error"
+        Properties:
+            AdminCreateUserConfig:
+                AllowAdminCreateUserOnly: true
+                UnusedAccountValidityDays: 7
+                InviteMessageTemplate:
+                  EmailSubject: "Amazon Rekognition Custom Brand Detection private labeling workteam login"
+                  EmailMessage:
+                        "<p>You are invited to join the Amazon Rekognition Custom Brand Detection labeling team.</p>
+                        <p>
+                        Username: <strong>{username}</strong><br />
+                        Password: <strong>{####}</strong>
+                        </p>"
+            AliasAttributes:
+                - email
+            AutoVerifiedAttributes:
+                - email
+            MfaConfiguration: 'OFF'
+            Policies:
+                PasswordPolicy:
+                    MinimumLength: 8
+                    RequireLowercase: true
+                    RequireNumbers: true
+                    RequireSymbols: false
+                    RequireUppercase: true
+            UserPoolName: !Sub [
+                "${x0}-${x1}-labeling-userpool", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            UserPoolTags:
+                SolutionId: !FindInMap [
+                    "Solution",
+                    "Project",
+                    "LowerCaseId"
+                ]
+
+    PrivateWorkforceUserGroup:
+        Type: AWS::Cognito::UserPoolGroup
+        Properties:
+            Description: "User group for Amazon SageMaker Ground Truth labeling workteam"
+            GroupName: !Sub [
+                "${x0}-${x1}-labeling-usergroup", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            UserPoolId: !Ref PrivateWorkforceUserPool
+
+    PrivateWorkforceAppClient:
+        Type: AWS::Cognito::UserPoolClient
+        Properties:
+            ClientName: !Sub [
+                "${x0}-${x1}-labeling-appclient", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            ExplicitAuthFlows:
+                - "USER_PASSWORD_AUTH"
+            GenerateSecret: true
+            RefreshTokenValidity: 30
+            UserPoolId: !Ref PrivateWorkforceUserPool
+
+    PrivateWorkforceTopic:
+        Type: AWS::SNS::Topic
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W47
+                        reason: "SageMaker.CreateWorkteam fails if KmsMasterKeyId is enabled"
+        Properties:
+            TopicName: !Sub [
+                "${x0}-${x1}-labeling-topic", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            DisplayName: !FindInMap [
+                "SNS",
+                "PrivateWorkforceTopic",
+                "DisplayName"
+            ]
+            # Don't use Kms key here. SageMaker.CreateWorkteam api will fail.
+            # KmsMasterKeyId: "alias/aws/sns"
+
+    PrivateWorkforceTopicPolicy:
+        Type: AWS::SNS::TopicPolicy
+        Properties:
+            Topics:
+                - !Ref PrivateWorkforceTopic
+            PolicyDocument:
+                Id: !Sub [
+                    "${x0}-${x1}-labeling-topic-policy", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Project",
+                            "LowerCaseId"
+                        ],
+                        x1: !Select [
+                            4,
+                            !Split [
+                                "-",
+                                !Select [
+                                    2,
+                                    !Split [
+                                        "/",
+                                        !Sub "${AWS::StackId}"
+                                    ]
+                                ]
+                            ]
+                        ]
+                    }
+                ]
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Sid: "ground-truth-private-workforce"
+                        Effect: "Allow"
+                        Action: "sns:Publish"
+                        Resource: !Ref PrivateWorkforceTopic
+                        Principal:
+                            Service:
+                                - "sagemaker.amazonaws.com"
+                                - "lambda.amazonaws.com"
+
+    PrivateWorkforceConfiguration:
+        Type: Custom::PrivateWorkforceConfiguration
+        Properties:
+            ServiceToken: !GetAtt CustomResourceLambda.Arn
+            Data:
+                SolutionId: !FindInMap [
+                    "Solution",
+                    "Project",
+                    "LowerCaseId"
+                ]
+                UserPool: !Ref PrivateWorkforceUserPool
+                UserGroup: !Ref PrivateWorkforceUserGroup
+                AppClientId: !Ref PrivateWorkforceAppClient
+                TopicArn: !Ref PrivateWorkforceTopic
+                UserPoolDomain: !Sub [
+                    "${x0}-${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Project",
+                            "LowerCaseId"
+                        ],
+                        x1: !Select [
+                            4,
+                            !Split [
+                                "-",
+                                !Select [
+                                    2,
+                                    !Split [
+                                        "/",
+                                        !Sub "${AWS::StackId}"
+                                    ]
+                                ]
+                            ]
+                        ]
+                    }
+                ]
+
+
+    ################################################################################
+    #
+    # AWS Step Functions (Custom Labels Nested State Machines)
+    # * State machine role
+    # * State machine Lambda role
+    # * Training Job state machine
+    # * Start Model state machine
+    #
+    ################################################################################
+    ModelTimerTable:
+        Type: AWS::DynamoDB::Table
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W28
+                        reason: "Table uses explicit name such that the items won't get destroy during stack update"
+        Properties:
+            TableName: !Sub [
+                "${x0}-${x1}-model-timer", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            BillingMode: "PAY_PER_REQUEST"
+            AttributeDefinitions:
+                -
+                    AttributeName: !FindInMap [
+                        "DynamoDB",
+                        "ModelTimer",
+                        "PartitionKey"
+                    ]
+                    AttributeType: "S"
+            KeySchema:
+                -
+                    AttributeName: !FindInMap [
+                        "DynamoDB",
+                        "ModelTimer",
+                        "PartitionKey"
+                    ]
+                    KeyType: HASH
+            SSESpecification:
+                SSEEnabled: true
+            PointInTimeRecoverySpecification:
+                PointInTimeRecoveryEnabled: true
+            TimeToLiveSpecification:
+                AttributeName: ttl
+                Enabled: true
+            StreamSpecification:
+                StreamViewType: NEW_AND_OLD_IMAGES
+
+    ModelTimerStreamLogGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+            LogGroupName: !Sub [
+                "/aws/lambda/${x0}-${x1}-${x2}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ],
+                    x2: !FindInMap [
+                        "Workflow",
+                        "ModelTimerStream",
+                        "Name"
+                    ]
+                }
+            ]
+            RetentionInDays: 30
+
+    ModelTimerStreamRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                -
+                    Effect: "Allow"
+                    Principal:
+                        Service: "lambda.amazonaws.com"
+                    Action: "sts:AssumeRole"
+            Path: /
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${x1}-model-timer-stream", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ],
+                            x1: !Select [
+                                4,
+                                !Split [
+                                    "-",
+                                    !Select [
+                                        2,
+                                        !Split [
+                                            "/",
+                                            !Sub "${AWS::StackId}"
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                            # Logs
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "logs:CreateLogGroup"
+                                    - "logs:CreateLogStream"
+                                    - "logs:PutLogEvents"
+                                Resource: !GetAtt ModelTimerStreamLogGroup.Arn
+                            # DynamoDB stream permission
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "dynamodb:DescribeStream"
+                                    - "dynamodb:GetRecords"
+                                    - "dynamodb:GetShardIterator"
+                                    - "dynamodb:ListStreams"
+                                Resource: !GetAtt ModelTimerTable.StreamArn
+                            # Rekognition
+                            -
+                                Effect: "Allow"
+                                Action: "rekognition:StopProjectVersion"
+                                Resource: !Sub "arn:aws:rekognition:${AWS::Region}:${AWS::AccountId}:project/*/version/*/*"
+
+    ModelTimerStreamLambda:
+        Type: AWS::Lambda::Function
+        Properties:
+            FunctionName: !Sub [
+                "${x0}-${x1}-${x2}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ],
+                    x2: !FindInMap [
+                        "Workflow",
+                        "ModelTimerStream",
+                        "Name"
+                    ]
+                }
+            ]
+            Description: !Sub [
+                "(${x0}) custom labels model stream", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            Runtime: !FindInMap [
+                "Node",
+                "Runtime",
+                "Version"
+            ]
+            MemorySize: 128
+            Timeout: 900
+            Handler: index.handler
+            Role: !GetAtt ModelTimerStreamRole.Arn
+            Code:
+                S3Bucket: !Sub [
+                    "${x0}${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "S3Bucket"
+                        ],
+                        x1: !If [
+                            bSingleRegion,
+                            "",
+                            !Sub "-${AWS::Region}"
+                        ]
+                    }
+                ]
+                S3Key: !Sub [
+                    "${x0}/${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "KeyPrefix"
+                        ],
+                        x1: !FindInMap [
+                            "Solution",
+                            "Package",
+                            "ModelTimerStream"
+                        ]
+                    }
+                ]
+            Layers:
+                - !Ref CoreLibLayer
+                - !Ref AwsSdkLayer
+            Environment:
+                Variables:
+                    ENV_SOLUTION_UUID: !Select [
+                        2,
+                        !Split [
+                            "/",
+                            !Sub "${AWS::StackId}"
+                        ]
+                    ]
+
+    ModelTimerStreamEventSource:
+        Type: AWS::Lambda::EventSourceMapping
+        Properties:
+            Enabled: true
+            EventSourceArn: !GetAtt ModelTimerTable.StreamArn
+            FunctionName: !Ref ModelTimerStreamLambda
+            BatchSize: 1
+            MaximumRetryAttempts: 10
+            StartingPosition: LATEST
+
+    CustomLabelsLogGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+            LogGroupName: !Sub [
+                "/aws/lambda/${x0}-${x1}-${x2}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ],
+                    x2: !FindInMap [
+                        "Workflow",
+                        "CustomLabels",
+                        "Name"
+                    ]
+                }
+            ]
+            RetentionInDays: 30
+
+    CustomLabelsLambdaRole:
+        Type: AWS::IAM::Role
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W11
+                        reason: "The wildcard is used here in order to access s3 objects within the bucket."
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Action: "sts:AssumeRole"
+                        Principal:
+                            Service: "lambda.amazonaws.com"
+            Path: /
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${x1}-custom-labels-role", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ],
+                            x1: !Select [
+                                4,
+                                !Split [
+                                    "-",
+                                    !Select [
+                                        2,
+                                        !Split [
+                                            "/",
+                                            !Sub "${AWS::StackId}"
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                            ## CloudWatch Logs
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "logs:CreateLogGroup"
+                                    - "logs:CreateLogStream"
+                                    - "logs:PutLogEvents"
+                                Resource: !GetAtt CustomLabelsLogGroup.Arn
+                            ## S3
+                            -
+                                Effect: Allow
+                                ## Note: Custom Labels requires this. A wildcard is required for ListAllMyBuckets, see https://docs.aws.amazon.com/IAM/latest/UserGuide/list_amazons3.html
+                                Action: "s3:ListAllMyBuckets"
+                                Resource: !Join ["", ["arn:aws:s3:::", "*"]]
+                            -
+                                Effect: "Allow"
+                                Action: "s3:ListBucket"
+                                Resource: !Sub "arn:aws:s3:::${SourceBucket}"
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "s3:GetObject"
+                                    - "s3:GetObjectAcl"
+                                    - "s3:GetObjectVersion"
+                                    - "s3:GetObjectTagging"
+                                    - "s3:PutObject"
+                                    - "s3:PutObjectAcl"
+                                Resource: !Sub "arn:aws:s3:::${SourceBucket}/*"
+                            ## Rekognition Custom Labels
+                            -
+                                Effect: Allow
+                                Action: "rekognition:DescribeProjects"
+                                ## Note: a wildcard is required for DescribeProjects, see https://docs.aws.amazon.com/IAM/latest/UserGuide/list_amazonrekognition.html
+                                Resource: !Join ["", ["*"]]
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "rekognition:CreateProject"
+                                    - "rekognition:DescribeProjectVersions"
+                                Resource: !Sub "arn:aws:rekognition:${AWS::Region}:${AWS::AccountId}:project/*/*"
+                            -
+                                Effect: Allow
+                                Action: "rekognition:CreateProjectVersion"
+                                Resource:
+                                    - !Sub "arn:aws:rekognition:${AWS::Region}:${AWS::AccountId}:project/*/*"
+                                    - !Sub "arn:aws:rekognition:${AWS::Region}:${AWS::AccountId}:project/*/version/*/*"
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "rekognition:StartProjectVersion"
+                                    - "rekognition:StopProjectVersion"
+                                Resource: !Sub "arn:aws:rekognition:${AWS::Region}:${AWS::AccountId}:project/*/version/*/*"
+                            ## DynamoDB - to manage Custom Labels runtime
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "dynamodb:DeleteItem"
+                                    - "dynamodb:DescribeTable"
+                                    - "dynamodb:Query"
+                                    - "dynamodb:Scan"
+                                    - "dynamodb:PutItem"
+                                    - "dynamodb:UpdateItem"
+                                    - "dynamodb:Attributes"
+                                    - "dynamodb:LeadingKeys"
+                                    - "dynamodb:ReturnConsumedCapacity"
+                                    - "dynamodb:ReturnValues"
+                                    - "dynamodb:Select"
+                                Resource: !GetAtt ModelTimerTable.Arn
+
+    CustomLabelsLambda:
+        Type: AWS::Lambda::Function
+        Properties:
+            FunctionName: !Sub [
+                "${x0}-${x1}-${x2}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ],
+                    x2: !FindInMap [
+                        "Workflow",
+                        "CustomLabels",
+                        "Name"
+                    ]
+                }
+            ]
+            Description: !Sub [
+                "(${x0}) custom labels state machine lambda", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            Runtime: !FindInMap [
+                "Node",
+                "Runtime",
+                "Version"
+            ]
+            MemorySize: 128
+            Timeout: 900
+            Handler: index.handler
+            Role: !GetAtt CustomLabelsLambdaRole.Arn
+            Code:
+                S3Bucket: !Sub [
+                    "${x0}${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "S3Bucket"
+                        ],
+                        x1: !If [
+                            bSingleRegion,
+                            "",
+                            !Sub "-${AWS::Region}"
+                        ]
+                    }
+                ]
+                S3Key: !Sub [
+                    "${x0}/${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "KeyPrefix"
+                        ],
+                        x1: !FindInMap [
+                            "Solution",
+                            "Package",
+                            "CustomLabels"
+                        ]
+                    }
+                ]
+            Layers:
+                - !Ref AwsSdkLayer
+                - !Ref CoreLibLayer
+            Environment:
+                Variables:
+                    ENV_SERVICE_TOKEN_TABLE: !Ref ServiceTokenTable
+                    ENV_SERVICE_TOKEN_TABLE_PARTITION_KEY: !FindInMap [
+                        "DynamoDB",
+                        "ServiceToken",
+                        "PartitionKey"
+                    ]
+                    ENV_SERVICE_TOKEN_TABLE_SORT_KEY: !FindInMap [
+                        "DynamoDB",
+                        "ServiceToken",
+                        "SortKey"
+                    ]
+                    ENV_MODEL_TIMER_TABLE: !Ref ModelTimerTable
+                    ENV_MODEL_TIMER_TABLE_PARTITION_KEY: !FindInMap [
+                        "DynamoDB",
+                        "ModelTimer",
+                        "PartitionKey"
+                    ]
+
+    CustomLabelsStateMachineRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Action: "sts:AssumeRole"
+                        Principal:
+                            Service: !Sub "states.${AWS::Region}.amazonaws.com"
+            Path: /
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${x1}-custom-labels-state-machine-role", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ],
+                            x1: !Select [
+                                4,
+                                !Split [
+                                    "-",
+                                    !Select [
+                                        2,
+                                        !Split [
+                                            "/",
+                                            !Sub "${AWS::StackId}"
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                            -
+                                Effect: "Allow"
+                                Action: "lambda:InvokeFunction"
+                                Resource: !Sub [
+                                    "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${x0}-${x1}-*", {
+                                        x0: !FindInMap [
+                                            "Solution",
+                                            "Project",
+                                            "LowerCaseId"
+                                        ],
+                                        x1: !Select [
+                                            4,
+                                            !Split [
+                                                "-",
+                                                !Select [
+                                                    2,
+                                                    !Split [
+                                                        "/",
+                                                        !Sub "${AWS::StackId}"
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    }
+                                ]
+
+    CustomLabelsTrainingStateMachine:
+        Type: AWS::StepFunctions::StateMachine
+        Properties:
+            StateMachineName: !Sub [
+                "${x0}-${x1}-custom-labels-training-job", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            RoleArn: !GetAtt CustomLabelsStateMachineRole.Arn
+            DefinitionString:
+                !Sub
+                    - |-
+                        {
+                            "StartAt": "Create project version",
+                            "States": {
+                                "Create project version": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "create-project-version",
+                                        "input.$": "$.input"
+                                    },
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 2,
+                                            "BackoffRate": 1.2
+                                        }
+                                    ],
+                                    "Next": "Check training job"
+                                },
+                                "Check training job": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "check-training-job",
+                                        "input.$": "$.input",
+                                        "output.$": "$.output"
+                                    },
+                                    "Next": "Training job completed?",
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 2,
+                                            "BackoffRate": 1.2
+                                        }
+                                    ]
+                                },
+                                "Training job completed?": {
+                                    "Type": "Choice",
+                                    "Choices": [
+                                        {
+                                            "Variable": "$.output['check-training-job'].status",
+                                            "StringEquals": "TRAINING_IN_PROGRESS",
+                                            "Next": "Wait for training job (15mins)"
+                                        },
+                                        {
+                                            "Or": [
+                                                {
+                                                    "Variable": "$.output['check-training-job'].status",
+                                                    "StringEquals": "TRAINING_FAILED"
+                                                },
+                                                {
+                                                    "Variable": "$.output['check-training-job'].status",
+                                                    "StringEquals": "FAILED"
+                                                },
+                                                {
+                                                    "Variable": "$.output['check-training-job'].status",
+                                                    "StringEquals": "DELETING"
+                                                }
+                                            ],
+                                            "Next": "Training job failed"
+                                        }
+                                    ],
+                                    "Default": "Training job succeeded"
+                                },
+                                "Wait for training job (15mins)": {
+                                    "Type": "Wait",
+                                    "Seconds": 900,
+                                    "Next": "Check training job"
+                                },
+                                "Training job failed": {
+                                    "Type": "Fail"
+                                },
+                                "Training job succeeded": {
+                                    "Type": "Succeed"
+                                }
+                            }
+                        }
+                    -
+                        {
+                            x0: !GetAtt CustomLabelsLambda.Arn
+                        }
+
+    # Custom Labels Model management
+    CustomLabelsStartModelStateMachine:
+        Type: AWS::StepFunctions::StateMachine
+        Properties:
+            StateMachineName: !Sub [
+                "${x0}-${x1}-custom-labels-start-model", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            RoleArn: !GetAtt CustomLabelsStateMachineRole.Arn
+            DefinitionString:
+                !Sub
+                    - |-
+                        {
+                            "StartAt": "Check model status",
+                            "States": {
+                                "Check model status": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "check-model-status",
+                                        "input.$": "$.input",
+                                        "output.$": "$.output"
+                                    },
+                                    "Next": "Model started?",
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 2,
+                                            "BackoffRate": 1.2
+                                        }
+                                    ]
+                                },
+                                "Model started?": {
+                                    "Type": "Choice",
+                                    "Choices": [
+                                        {
+                                            "Variable": "$.output['check-model-status'].status",
+                                            "StringEquals": "RUNNING",
+                                            "Next": "Model started"
+                                        },
+                                        {
+                                            "Or": [
+                                                {
+                                                    "Variable": "$.output['check-model-status'].status",
+                                                    "StringEquals": "TRAINING_FAILED"
+                                                },
+                                                {
+                                                    "Variable": "$.output['check-model-status'].status",
+                                                    "StringEquals": "FAILED"
+                                                },
+                                                {
+                                                    "Variable": "$.output['check-model-status'].status",
+                                                    "StringEquals": "DELETING"
+                                                }
+                                            ],
+                                            "Next": "Model failed"
+                                        },
+                                        {
+                                            "Or": [
+                                                {
+                                                    "Variable": "$.output['check-model-status'].status",
+                                                    "StringEquals": "TRAINING_COMPLETED"
+                                                },
+                                                {
+                                                    "Variable": "$.output['check-model-status'].status",
+                                                    "StringEquals": "STOPPED"
+                                                }
+                                            ],
+                                            "Next": "Start project version"
+                                        }
+                                    ],
+                                    "Default": "Wait for model status (3mins)"
+                                },
+                                "Wait for model status (3mins)": {
+                                    "Type": "Wait",
+                                    "Seconds": 180,
+                                    "Next": "Check model status"
+                                },
+                                "Start project version": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "start-project-version",
+                                        "input.$": "$.input",
+                                        "output.$": "$.output"
+                                    },
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 2,
+                                            "BackoffRate": 1.2
+                                        }
+                                    ],
+                                    "Next": "Check model status"
+                                },
+                                "Model started": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "project-version-started",
+                                        "input.$": "$.input",
+                                        "output.$": "$.output"
+                                    },
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 2,
+                                            "BackoffRate": 1.2
+                                        }
+                                    ],
+                                    "End": true
+                                },
+                                "Model failed": {
+                                    "Type": "Fail"
+                                }
+                            }
+                        }
+                    -
+                        {
+                            x0: !GetAtt CustomLabelsLambda.Arn
+                        }
+
+    ################################################################################
+    #
+    # AWS Step Functions (Ground Truth Labeling Job State Machine)
+    # * Labeling Job role
+    # * State machine role and state machine definition
+    # * State machine Lambda role
+    #
+    ################################################################################
+    LabelingJobRole:
+        Type: AWS::IAM::Role
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W11
+                        reason: "The wildcard is used here in order to access s3 objects within the bucket."
+                    -
+                        id: F38
+                        reason: "The wildcard is needed in PassRole to allow SageMaker Ground Truth to pass role to the labeler. It is protected with a Condition."
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Action: "sts:AssumeRole"
+                        Principal:
+                            Service: "sagemaker.amazonaws.com"
+            Path: /
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${x1}-labeling-job-role", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ],
+                            x1: !Select [
+                                4,
+                                !Split [
+                                    "-",
+                                    !Select [
+                                        2,
+                                        !Split [
+                                            "/",
+                                            !Sub "${AWS::StackId}"
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                            # SageMaker to pass role
+                            -
+                                Effect: "Allow"
+                                Action: "iam:PassRole"
+                                Resource: !Join ["", ["*"]]
+                                Condition:
+                                    StringEquals:
+                                        "iam:PassedToService": "sagemaker.amazonaws.com"
+                            # S3
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "s3:GetBucketLocation"
+                                    - "s3:ListBucket"
+                                Resource: !Sub "arn:aws:s3:::${SourceBucket}"
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "s3:GetObject"
+                                    - "s3:PutObject"
+                                Resource: !Sub "arn:aws:s3:::${SourceBucket}/*"
+                            # CloudWatch Logs
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "logs:CreateLogGroup"
+                                    - "logs:CreateLogStream"
+                                    - "logs:DescribeLogStreams"
+                                    - "logs:PutLogEvents"
+                                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*"
+                            -
+                                Effect: "Allow"
+                                Action: "cloudwatch:PutMetricData"
+                                Resource: !Join ["", ["*"]]
+            MaxSessionDuration: 14400
+
+    GTLabelingJobStateMachineRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Action: "sts:AssumeRole"
+                        Principal:
+                            Service: !Sub "states.${AWS::Region}.amazonaws.com"
+            Path: /
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${x1}-gt-labeling-job-state-machine-role", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ],
+                            x1: !Select [
+                                4,
+                                !Split [
+                                    "-",
+                                    !Select [
+                                        2,
+                                        !Split [
+                                            "/",
+                                            !Sub "${AWS::StackId}"
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                            -
+                                Effect: "Allow"
+                                Action: "lambda:InvokeFunction"
+                                Resource: !Sub [
+                                    "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${x0}-${x1}-*", {
+                                        x0: !FindInMap [
+                                            "Solution",
+                                            "Project",
+                                            "LowerCaseId"
+                                        ],
+                                        x1: !Select [
+                                            4,
+                                            !Split [
+                                                "-",
+                                                !Select [
+                                                    2,
+                                                    !Split [
+                                                        "/",
+                                                        !Sub "${AWS::StackId}"
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    }
+                                ]
+                            # Below polices are needed for Service Integration of nested workflows
+                            # https://docs.aws.amazon.com/step-functions/latest/dg/stepfunctions-iam.html
+                            -
+                                Effect: "Allow"
+                                Action: "states:StartExecution"
+                                Resource: !Ref CustomLabelsTrainingStateMachine
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "states:DescribeExecution"
+                                    - "states:StopExecution"
+                                Resource: !Ref CustomLabelsTrainingStateMachine
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "events:PutTargets"
+                                    - "events:PutRule"
+                                    - "events:DescribeRule"
+                                Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForStepFunctionsExecutionRule"
+
+    GTLabelingJobLogGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+            LogGroupName: !Sub [
+                "/aws/lambda/${x0}-${x1}-${x2}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ],
+                    x2: !FindInMap [
+                        "Workflow",
+                        "LabelingJob",
+                        "Name"
+                    ]
+                }
+            ]
+            RetentionInDays: 30
+
+    GTLabelingJobLambdaRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Action: "sts:AssumeRole"
+                        Principal:
+                            Service: "lambda.amazonaws.com"
+            Path: /
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${x1}-gt-labeling-job-role", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ],
+                            x1: !Select [
+                                4,
+                                !Split [
+                                    "-",
+                                    !Select [
+                                        2,
+                                        !Split [
+                                            "/",
+                                            !Sub "${AWS::StackId}"
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                            ## S3
+                            -
+                                Effect: "Allow"
+                                Action: "s3:ListBucket"
+                                Resource: !Sub "arn:aws:s3:::${SourceBucket}"
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "s3:GetObject"
+                                    - "s3:PutObject"
+                                    - "s3:SelectObjectContent"
+                                Resource: !Sub "arn:aws:s3:::${SourceBucket}/*"
+                            ## CloudWatch Logs
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "logs:CreateLogGroup"
+                                    - "logs:CreateLogStream"
+                                    - "logs:PutLogEvents"
+                                Resource: !GetAtt GTLabelingJobLogGroup.Arn
+                            ## SageMaker Ground Truth
+                            -
+                                Effect: "Allow"
+                                Action: "sagemaker:DescribeLabelingJob"
+                                Resource: !Sub "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:labeling-job/*"
+                            -
+                                Effect: "Allow"
+                                Action: "sagemaker:CreateLabelingJob"
+                                Resource: !Sub "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:labeling-job/*"
+                                Condition:
+                                    StringEquals:
+                                        "sagemaker:WorkteamArn": !GetAtt PrivateWorkforceConfiguration.TeamArn
+                            -
+                                Effect: "Allow"
+                                Action: "iam:PassRole"
+                                Resource: !GetAtt LabelingJobRole.Arn
+                            ## DynamoDB - to store Step Functions Execution Token
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "dynamodb:DeleteItem"
+                                    - "dynamodb:DescribeTable"
+                                    - "dynamodb:Query"
+                                    - "dynamodb:Scan"
+                                    - "dynamodb:UpdateItem"
+                                    - "dynamodb:Attributes"
+                                    - "dynamodb:LeadingKeys"
+                                    - "dynamodb:ReturnConsumedCapacity"
+                                    - "dynamodb:ReturnValues"
+                                    - "dynamodb:Select"
+                                Resource: !GetAtt ServiceTokenTable.Arn
+
+    GTLabelingJobLambda:
+        Type: AWS::Lambda::Function
+        Properties:
+            FunctionName: !Sub [
+                "${x0}-${x1}-${x2}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ],
+                    x2: !FindInMap [
+                        "Workflow",
+                        "LabelingJob",
+                        "Name"
+                    ]
+                }
+            ]
+            Description: !Sub [
+                "(${x0}) GT labeling job state machine lambda", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            Runtime: !FindInMap [
+                "Node",
+                "Runtime",
+                "Version"
+            ]
+            MemorySize: 3008
+            Timeout: 900
+            Handler: index.handler
+            Role: !GetAtt GTLabelingJobLambdaRole.Arn
+            Code:
+                S3Bucket: !Sub [
+                    "${x0}${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "S3Bucket"
+                        ],
+                        x1: !If [
+                            bSingleRegion,
+                            "",
+                            !Sub "-${AWS::Region}"
+                        ]
+                    }
+                ]
+                S3Key: !Sub [
+                    "${x0}/${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "KeyPrefix"
+                        ],
+                        x1: !FindInMap [
+                            "Solution",
+                            "Package",
+                            "GTLabelingJob"
+                        ]
+                    }
+                ]
+            Layers:
+                - !Ref AwsSdkLayer
+                - !Ref CoreLibLayer
+                - !Ref FFmpegLayer
+                - !Ref CanvasLayer
+            Environment:
+                Variables:
+                    ENV_SOLUTION_UUID: !Select [
+                        2,
+                        !Split [
+                            "/",
+                            !Sub "${AWS::StackId}"
+                        ]
+                    ]
+                    ENV_LABELING_WORKER_ROLE_ARN: !GetAtt LabelingJobRole.Arn
+                    ENV_SERVICE_TOKEN_TABLE: !Ref ServiceTokenTable
+                    ENV_SERVICE_TOKEN_TABLE_PARTITION_KEY: !FindInMap [
+                        "DynamoDB",
+                        "ServiceToken",
+                        "PartitionKey"
+                    ]
+                    ENV_SERVICE_TOKEN_TABLE_SORT_KEY: !FindInMap [
+                        "DynamoDB",
+                        "ServiceToken",
+                        "SortKey"
+                    ]
+                    ENV_WORKTEAM_ARN: !GetAtt PrivateWorkforceConfiguration.TeamArn
+
+    GTLabelingJobStateMachine:
+        Type: AWS::StepFunctions::StateMachine
+        Properties:
+            StateMachineName: !Sub [
+                "${x0}-${x1}-gt-labeling-job", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            RoleArn: !GetAtt GTLabelingJobStateMachineRole.Arn
+            DefinitionString:
+                !Sub
+                    - |-
+                        {
+                            "StartAt": "Probe video (Preproc)",
+                            "States": {
+                                "Probe video (Preproc)": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "probe-video-preproc",
+                                        "input.$": "$.input"
+                                    },
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 2,
+                                            "BackoffRate": 1.2
+                                        }
+                                    ],
+                                    "Next": "Probe video (All)"
+                                },
+                                "Probe video (All)": {
+                                    "Type": "Map",
+                                    "ItemsPath": "$.output['probe-video'].iterators",
+                                    "MaxConcurrency": 20,
+                                    "Iterator": {
+                                        "StartAt": "Probe video",
+                                        "States": {
+                                            "Probe video": {
+                                                "Type": "Task",
+                                                "Resource": "${x0}",
+                                                "Parameters": {
+                                                    "state": "probe-video",
+                                                    "input.$": "$"
+                                                },
+                                                "Retry": [
+                                                    {
+                                                        "ErrorEquals": [
+                                                            "States.ALL"
+                                                        ],
+                                                        "IntervalSeconds": 1,
+                                                        "MaxAttempts": 2,
+                                                        "BackoffRate": 1.2
+                                                    }
+                                                ],
+                                                "End": true
+                                            }
+                                        }
+                                    },
+                                    "ResultPath": "$.output['probe-video'].iterators",
+                                    "Next": "Extract keyframes (Preproc)"
+                                },
+                                "Extract keyframes (Preproc)": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "extract-keyframes-preproc",
+                                        "input.$": "$.input",
+                                        "output.$": "$.output"
+                                    },
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 2,
+                                            "BackoffRate": 1.2
+                                        }
+                                    ],
+                                    "Next": "Extract keyframes (All)"
+                                },
+                                "Extract keyframes (All)": {
+                                    "Type": "Map",
+                                    "ItemsPath": "$.output['extract-keyframes'].iterators",
+                                    "MaxConcurrency": 20,
+                                    "Iterator": {
+                                        "StartAt": "Extract keyframes",
+                                        "States": {
+                                            "Extract keyframes": {
+                                                "Type": "Task",
+                                                "Resource": "${x0}",
+                                                "Parameters": {
+                                                    "state": "extract-keyframes",
+                                                    "input.$": "$"
+                                                },
+                                                "Retry": [
+                                                    {
+                                                        "ErrorEquals": [
+                                                            "States.ALL"
+                                                        ],
+                                                        "IntervalSeconds": 1,
+                                                        "MaxAttempts": 2,
+                                                        "BackoffRate": 1.2
+                                                    }
+                                                ],
+                                                "End": true
+                                            }
+                                        }
+                                    },
+                                    "ResultPath": "$.output['extract-keyframes'].iterators",
+                                    "Next": "Prepare labeling job"
+                                },
+                                "Prepare labeling job": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "prepare-labeling-job",
+                                        "input.$": "$.input",
+                                        "output.$": "$.output"
+                                    },
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 2,
+                                            "BackoffRate": 1.2
+                                        }
+                                    ],
+                                    "Next": "Start and wait labeling job"
+                                },
+                                "Start and wait labeling job": {
+                                    "Type": "Task",
+                                    "Resource":"arn:aws:states:::lambda:invoke.waitForTaskToken",
+                                    "Parameters": {
+                                        "FunctionName": "${a0}",
+                                        "Payload": {
+                                            "token.$":"$$.Task.Token",
+                                            "state": "start-labeling-job",
+                                            "input.$": "$.input",
+                                            "output.$": "$.output"
+                                        }
+                                    },
+                                    "TimeoutSeconds": 345600,
+                                    "Next": "Collect annotations"
+                                },
+                                "Collect annotations": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "collect-annotations",
+                                        "input.$": "$.input",
+                                        "output.$": "$.output"
+                                    },
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 2,
+                                            "BackoffRate": 1.2
+                                        }
+                                    ],
+                                    "Next": "Nested states"
+                                },
+                                "Nested states": {
+                                    "Type": "Parallel",
+                                    "Branches": [
+                                        {
+                                            "StartAt": "Start and wait custom labels",
+                                            "States": {
+                                                "Start and wait custom labels": {
+                                                    "Type": "Task",
+                                                    "Resource": "arn:aws:states:::states:startExecution.sync",
+                                                    "Parameters": {
+                                                        "Input": {
+                                                            "input.$": "$.output['collect-annotations'].output"
+                                                        },
+                                                        "StateMachineArn": "${CustomLabelsTrainingStateMachine}"
+                                                    },
+                                                    "End": true
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "StartAt": "Passthrough",
+                                            "States": {
+                                                "Passthrough": {
+                                                    "Type": "Pass",
+                                                    "End": true
+                                                }
+                                            }
+                                        }
+                                    ],
+                                    "Next": "Job completed"
+                                },
+                                "Job completed": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "job-completed",
+                                        "multiStateOutputs.$": "$"
+                                    },
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 2,
+                                            "BackoffRate": 1.2
+                                        }
+                                    ],
+                                    "End": true
+                                }
+                            }
+                        }
+                    -
+                        {
+                            a0: !Ref GTLabelingJobLambda,
+                            x0: !GetAtt GTLabelingJobLambda.Arn
+                        }
+
+
+    ################################################################################
+    #
+    # AWS Step Functions (Analysis State Machine)
+    # * Analysis state machine
+    # * Video analysis state machine
+    # * Image analysis state machine
+    #
+    ################################################################################
+    NestedAnalysisStateMachineRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Action: "sts:AssumeRole"
+                        Principal:
+                            Service: !Sub "states.${AWS::Region}.amazonaws.com"
+            Path: /
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${x1}-nested-analysis-state-machine-role", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ],
+                            x1: !Select [
+                                4,
+                                !Split [
+                                    "-",
+                                    !Select [
+                                        2,
+                                        !Split [
+                                            "/",
+                                            !Sub "${AWS::StackId}"
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                            -
+                                Effect: "Allow"
+                                Action: "lambda:InvokeFunction"
+                                Resource: !Sub [
+                                    "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${x0}-${x1}-*", {
+                                        x0: !FindInMap [
+                                            "Solution",
+                                            "Project",
+                                            "LowerCaseId"
+                                        ],
+                                        x1: !Select [
+                                            4,
+                                            !Split [
+                                                "-",
+                                                !Select [
+                                                    2,
+                                                    !Split [
+                                                        "/",
+                                                        !Sub "${AWS::StackId}"
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    }
+                                ]
+                            # Below polices are needed for Service Integration of nested workflows
+                            # https://docs.aws.amazon.com/step-functions/latest/dg/stepfunctions-iam.html
+                            -
+                                Effect: "Allow"
+                                Action: "states:StartExecution"
+                                Resource: !Ref CustomLabelsStartModelStateMachine
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "states:DescribeExecution"
+                                    - "states:StopExecution"
+                                Resource: !Ref CustomLabelsStartModelStateMachine
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "events:PutTargets"
+                                    - "events:PutRule"
+                                    - "events:DescribeRule"
+                                Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForStepFunctionsExecutionRule"
+
+    ## Image analysis state machine resources
+    ImageAnalysisLogGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+            LogGroupName: !Sub [
+                "/aws/lambda/${x0}-${x1}-${x2}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ],
+                    x2: !FindInMap [
+                        "Workflow",
+                        "ImageAnalysis",
+                        "Name"
+                    ]
+                }
+            ]
+            RetentionInDays: 30
+
+    ImageAnalysisLambdaRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Action: "sts:AssumeRole"
+                        Principal:
+                            Service: "lambda.amazonaws.com"
+            Path: /
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${x1}-image-analysis-role", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ],
+                            x1: !Select [
+                                4,
+                                !Split [
+                                    "-",
+                                    !Select [
+                                        2,
+                                        !Split [
+                                            "/",
+                                            !Sub "${AWS::StackId}"
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                            ## CloudWatch Logs
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "logs:CreateLogGroup"
+                                    - "logs:CreateLogStream"
+                                    - "logs:PutLogEvents"
+                                Resource: !GetAtt ImageAnalysisLogGroup.Arn
+                            ## S3
+                            -
+                                Effect: "Allow"
+                                Action: "s3:ListBucket"
+                                Resource: !Sub "arn:aws:s3:::${SourceBucket}"
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "s3:GetObject"
+                                    - "s3:PutObject"
+                                Resource: !Sub "arn:aws:s3:::${SourceBucket}/*"
+                            ## Rekognition Custom Labels
+                            -
+                                Effect: Allow
+                                Action: "rekognition:DetectCustomLabels"
+                                Resource: !Sub "arn:aws:rekognition:${AWS::Region}:${AWS::AccountId}:project/*/version/*/*"
+                            ## DynamoDB - to manage Custom Labels runtime
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "dynamodb:DeleteItem"
+                                    - "dynamodb:DescribeTable"
+                                    - "dynamodb:Query"
+                                    - "dynamodb:Scan"
+                                    - "dynamodb:PutItem"
+                                    - "dynamodb:UpdateItem"
+                                    - "dynamodb:Attributes"
+                                    - "dynamodb:LeadingKeys"
+                                    - "dynamodb:ReturnConsumedCapacity"
+                                    - "dynamodb:ReturnValues"
+                                    - "dynamodb:Select"
+                                Resource: !GetAtt ModelTimerTable.Arn
+
+    ImageAnalysisLambda:
+        Type: AWS::Lambda::Function
+        Properties:
+            FunctionName: !Sub [
+                "${x0}-${x1}-${x2}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ],
+                    x2: !FindInMap [
+                        "Workflow",
+                        "ImageAnalysis",
+                        "Name"
+                    ]
+                }
+            ]
+            Description: !Sub [
+                "(${x0}) image analysis state machine lambda", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            Runtime: !FindInMap [
+                "Node",
+                "Runtime",
+                "Version"
+            ]
+            MemorySize: 128
+            Timeout: 900
+            Handler: index.handler
+            Role: !GetAtt ImageAnalysisLambdaRole.Arn
+            Code:
+                S3Bucket: !Sub [
+                    "${x0}${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "S3Bucket"
+                        ],
+                        x1: !If [
+                            bSingleRegion,
+                            "",
+                            !Sub "-${AWS::Region}"
+                        ]
+                    }
+                ]
+                S3Key: !Sub [
+                    "${x0}/${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "KeyPrefix"
+                        ],
+                        x1: !FindInMap [
+                            "Solution",
+                            "Package",
+                            "ImageAnalysis"
+                        ]
+                    }
+                ]
+            Layers:
+                - !Ref CoreLibLayer
+                - !Ref AwsSdkLayer
+            Environment:
+                Variables:
+                    ENV_SOLUTION_UUID: !Select [
+                        2,
+                        !Split [
+                            "/",
+                            !Sub "${AWS::StackId}"
+                        ]
+                    ]
+                    ENV_MODEL_TIMER_TABLE: !Ref ModelTimerTable
+                    ENV_MODEL_TIMER_TABLE_PARTITION_KEY: !FindInMap [
+                        "DynamoDB",
+                        "ModelTimer",
+                        "PartitionKey"
+                    ]
+
+    ImageAnalysisStateMachine:
+        Type: AWS::StepFunctions::StateMachine
+        Properties:
+            StateMachineName: !Sub [
+                "${x0}-${x1}-analysis-image", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            RoleArn: !GetAtt NestedAnalysisStateMachineRole.Arn
+            DefinitionString:
+                !Sub
+                    - |-
+                        {
+                            "StartAt": "Start and wait custom labels model",
+                            "States": {
+                                "Start and wait custom labels model": {
+                                    "Type": "Task",
+                                    "Resource": "arn:aws:states:::states:startExecution.sync",
+                                    "Parameters": {
+                                        "Input": {
+                                            "input.$": "$.input",
+                                            "output.$": "$.output"
+                                        },
+                                        "StateMachineArn": "${CustomLabelsStartModelStateMachine}"
+                                    },
+                                    "Next": "Detect custom labels"
+                                },
+                                "Detect custom labels": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "detect-custom-labels",
+                                        "nestedStateOutput.$": "$"
+                                    },
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 4,
+                                            "BackoffRate": 1.1
+                                        }
+                                    ],
+                                    "End": true
+                                }
+                            }
+                        }
+                    -
+                        {
+                            x0: !GetAtt ImageAnalysisLambda.Arn
+                        }
+
+    ## Video analysis state machine resources
+    VideoAnalysisLogGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+            LogGroupName: !Sub [
+                "/aws/lambda/${x0}-${x1}-${x2}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ],
+                    x2: !FindInMap [
+                        "Workflow",
+                        "VideoAnalysis",
+                        "Name"
+                    ]
+                }
+            ]
+            RetentionInDays: 30
+
+    VideoAnalysisLambdaRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Action: "sts:AssumeRole"
+                        Principal:
+                            Service: "lambda.amazonaws.com"
+            Path: /
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${x1}-video-analysis-role", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ],
+                            x1: !Select [
+                                4,
+                                !Split [
+                                    "-",
+                                    !Select [
+                                        2,
+                                        !Split [
+                                            "/",
+                                            !Sub "${AWS::StackId}"
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                            ## CloudWatch Logs
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "logs:CreateLogGroup"
+                                    - "logs:CreateLogStream"
+                                    - "logs:PutLogEvents"
+                                Resource: !GetAtt VideoAnalysisLogGroup.Arn
+                            ## S3
+                            -
+                                Effect: "Allow"
+                                Action: "s3:ListBucket"
+                                Resource: !Sub "arn:aws:s3:::${SourceBucket}"
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "s3:GetObject"
+                                    - "s3:PutObject"
+                                Resource: !Sub "arn:aws:s3:::${SourceBucket}/*"
+                            ## Rekognition Custom Labels
+                            -
+                                Effect: Allow
+                                Action: "rekognition:DetectCustomLabels"
+                                Resource: !Sub "arn:aws:rekognition:${AWS::Region}:${AWS::AccountId}:project/*/version/*/*"
+                            ## DynamoDB - to manage Custom Labels runtime
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "dynamodb:DeleteItem"
+                                    - "dynamodb:DescribeTable"
+                                    - "dynamodb:Query"
+                                    - "dynamodb:Scan"
+                                    - "dynamodb:PutItem"
+                                    - "dynamodb:UpdateItem"
+                                    - "dynamodb:Attributes"
+                                    - "dynamodb:LeadingKeys"
+                                    - "dynamodb:ReturnConsumedCapacity"
+                                    - "dynamodb:ReturnValues"
+                                    - "dynamodb:Select"
+                                Resource: !GetAtt ModelTimerTable.Arn
+
+    VideoAnalysisLambda:
+        Type: AWS::Lambda::Function
+        Properties:
+            FunctionName: !Sub [
+                "${x0}-${x1}-${x2}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ],
+                    x2: !FindInMap [
+                        "Workflow",
+                        "VideoAnalysis",
+                        "Name"
+                    ]
+                }
+            ]
+            Description: !Sub [
+                "(${x0}) video analysis state machine lambda", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            Runtime: !FindInMap [
+                "Node",
+                "Runtime",
+                "Version"
+            ]
+            MemorySize: 3008
+            Timeout: 900
+            Handler: index.handler
+            Role: !GetAtt VideoAnalysisLambdaRole.Arn
+            Code:
+                S3Bucket: !Sub [
+                    "${x0}${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "S3Bucket"
+                        ],
+                        x1: !If [
+                            bSingleRegion,
+                            "",
+                            !Sub "-${AWS::Region}"
+                        ]
+                    }
+                ]
+                S3Key: !Sub [
+                    "${x0}/${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "KeyPrefix"
+                        ],
+                        x1: !FindInMap [
+                            "Solution",
+                            "Package",
+                            "VideoAnalysis"
+                        ]
+                    }
+                ]
+            Layers:
+                - !Ref CoreLibLayer
+                - !Ref AwsSdkLayer
+                - !Ref FFmpegLayer
+                - !Ref CanvasLayer
+            Environment:
+                Variables:
+                    ENV_SOLUTION_UUID: !Select [
+                        2,
+                        !Split [
+                            "/",
+                            !Sub "${AWS::StackId}"
+                        ]
+                    ]
+                    ENV_SERVICE_TOKEN_TABLE: !Ref ServiceTokenTable
+                    ENV_SERVICE_TOKEN_TABLE_PARTITION_KEY: !FindInMap [
+                        "DynamoDB",
+                        "ServiceToken",
+                        "PartitionKey"
+                    ]
+                    ENV_SERVICE_TOKEN_TABLE_SORT_KEY: !FindInMap [
+                        "DynamoDB",
+                        "ServiceToken",
+                        "SortKey"
+                    ]
+                    ENV_MODEL_TIMER_TABLE: !Ref ModelTimerTable
+                    ENV_MODEL_TIMER_TABLE_PARTITION_KEY: !FindInMap [
+                        "DynamoDB",
+                        "ModelTimer",
+                        "PartitionKey"
+                    ]
+
+    VideoAnalysisStateMachine:
+        Type: AWS::StepFunctions::StateMachine
+        Properties:
+            StateMachineName: !Sub [
+                "${x0}-${x1}-analysis-video", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            RoleArn: !GetAtt NestedAnalysisStateMachineRole.Arn
+            DefinitionString:
+                !Sub
+                    - |-
+                        {
+                            "StartAt": "Probe video",
+                            "States": {
+                                "Probe video": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "probe-video",
+                                        "input.$": "$.input"
+                                    },
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 2,
+                                            "BackoffRate": 1.2
+                                        }
+                                    ],
+                                    "Next": "Extract keyframes (All)"
+                                },
+                                "Extract keyframes (All)": {
+                                    "Type": "Map",
+                                    "ItemsPath": "$.output['extract-keyframes'].iterators",
+                                    "MaxConcurrency": 20,
+                                    "Iterator": {
+                                        "StartAt": "Extract keyframes",
+                                        "States": {
+                                            "Extract keyframes": {
+                                                "Type": "Task",
+                                                "Resource": "${x0}",
+                                                "Parameters": {
+                                                    "state": "extract-keyframes",
+                                                    "input.$": "$"
+                                                },
+                                                "Retry": [
+                                                    {
+                                                        "ErrorEquals": [
+                                                            "States.ALL"
+                                                        ],
+                                                        "IntervalSeconds": 1,
+                                                        "MaxAttempts": 2,
+                                                        "BackoffRate": 1.2
+                                                    }
+                                                ],
+                                                "End": true
+                                            }
+                                        }
+                                    },
+                                    "ResultPath": "$.output['extract-keyframes'].iterators",
+                                    "Next": "Extract keyframes (Postproc)"
+                                },
+                                "Extract keyframes (Postproc)": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "extract-keyframes-postproc",
+                                        "input.$": "$.input",
+                                        "output.$": "$.output"
+                                    },
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 2,
+                                            "BackoffRate": 1.2
+                                        }
+                                    ],
+                                    "Next": "Parallel process"
+                                },
+                                "Parallel process": {
+                                    "Type": "Parallel",
+                                    "Branches": [
+                                        {
+                                            "StartAt": "Create sprite images (Preproc)",
+                                            "States": {
+                                                "Create sprite images (Preproc)": {
+                                                    "Type": "Task",
+                                                    "Resource": "${x0}",
+                                                    "Parameters": {
+                                                        "state": "create-sprite-images-preproc",
+                                                        "input.$": "$.input",
+                                                        "output.$": "$.output"
+                                                    },
+                                                    "Retry": [
+                                                        {
+                                                            "ErrorEquals": [
+                                                                "States.ALL"
+                                                            ],
+                                                            "IntervalSeconds": 1,
+                                                            "MaxAttempts": 2,
+                                                            "BackoffRate": 1.2
+                                                        }
+                                                    ],
+                                                    "Next": "Create sprite images (All)"
+                                                },
+                                                "Create sprite images (All)": {
+                                                    "Type": "Map",
+                                                    "ItemsPath": "$.output['create-sprite-images'].iterators",
+                                                    "MaxConcurrency": 60,
+                                                    "Iterator": {
+                                                        "StartAt": "Create sprite images",
+                                                        "States": {
+                                                            "Create sprite images": {
+                                                                "Type": "Task",
+                                                                "Resource": "${x0}",
+                                                                "Parameters": {
+                                                                    "state": "create-sprite-images",
+                                                                    "input.$": "$"
+                                                                },
+                                                                "End": true
+                                                            }
+                                                        }
+                                                    },
+                                                    "ResultPath": "$.output['create-sprite-images'].iterators",
+                                                    "End": true
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "StartAt": "Start and wait custom labels model",
+                                            "States": {
+                                                "Start and wait custom labels model": {
+                                                    "Type": "Task",
+                                                    "Resource": "arn:aws:states:::states:startExecution.sync",
+                                                    "Parameters": {
+                                                        "Input": {
+                                                            "input.$": "$.input",
+                                                            "output.$": "$.output"
+                                                        },
+                                                        "StateMachineArn": "${CustomLabelsStartModelStateMachine}"
+                                                    },
+                                                    "Next": "Detect custom labels"
+                                                },
+                                                "Detect custom labels": {
+                                                    "Type": "Task",
+                                                    "Resource": "${x0}",
+                                                    "Parameters": {
+                                                        "state": "detect-custom-labels",
+                                                        "nestedStateOutput.$": "$"
+                                                    },
+                                                    "Retry": [
+                                                        {
+                                                            "ErrorEquals": [
+                                                                "States.ALL"
+                                                            ],
+                                                            "IntervalSeconds": 1,
+                                                            "MaxAttempts": 4,
+                                                            "BackoffRate": 1.1
+                                                        }
+                                                    ],
+                                                    "Next": "More frames?"
+                                                },
+                                                "More frames?": {
+                                                    "Type": "Choice",
+                                                    "Choices": [
+                                                        {
+                                                            "Variable": "$.output['detect-custom-labels'].status",
+                                                            "StringEquals": "completed",
+                                                            "Next": "Custom labels completed"
+                                                        }
+                                                    ],
+                                                    "Default": "Detect custom labels"
+                                                },
+                                                "Custom labels completed": {
+                                                    "Type": "Succeed"
+                                                }
+                                            }
+                                        }
+                                    ],
+                                    "Next": "Map frames to shots"
+                                },
+                                "Map frames to shots": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "map-frames-shots",
+                                        "multiStateOutputs.$": "$"
+                                    },
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 4,
+                                            "BackoffRate": 1.1
+                                        }
+                                    ],
+                                    "End": true
+                                }
+                            }
+                        }
+                    -
+                        {
+                            x0: !GetAtt VideoAnalysisLambda.Arn
+                        }
+
+    ## Analysis state machine resources
+    AnalysisLogGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+            LogGroupName: !Sub [
+                "/aws/lambda/${x0}-${x1}-${x2}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ],
+                    x2: !FindInMap [
+                        "Workflow",
+                        "Analysis",
+                        "Name"
+                    ]
+                }
+            ]
+            RetentionInDays: 30
+
+    AnalysisLambdaRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Action: "sts:AssumeRole"
+                        Principal:
+                            Service: "lambda.amazonaws.com"
+            Path: /
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${x1}-analysis-role", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ],
+                            x1: !Select [
+                                4,
+                                !Split [
+                                    "-",
+                                    !Select [
+                                        2,
+                                        !Split [
+                                            "/",
+                                            !Sub "${AWS::StackId}"
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                            ## CloudWatch Logs
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "logs:CreateLogGroup"
+                                    - "logs:CreateLogStream"
+                                    - "logs:PutLogEvents"
+                                Resource: !GetAtt AnalysisLogGroup.Arn
+
+    AnalysisLambda:
+        Type: AWS::Lambda::Function
+        Properties:
+            FunctionName: !Sub [
+                "${x0}-${x1}-${x2}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ],
+                    x2: !FindInMap [
+                        "Workflow",
+                        "Analysis",
+                        "Name"
+                    ]
+                }
+            ]
+            Description: !Sub [
+                "(${x0}) analysis state machine lambda", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            Runtime: !FindInMap [
+                "Node",
+                "Runtime",
+                "Version"
+            ]
+            MemorySize: 128
+            Timeout: 900
+            Handler: index.handler
+            Role: !GetAtt AnalysisLambdaRole.Arn
+            Code:
+                S3Bucket: !Sub [
+                    "${x0}${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "S3Bucket"
+                        ],
+                        x1: !If [
+                            bSingleRegion,
+                            "",
+                            !Sub "-${AWS::Region}"
+                        ]
+                    }
+                ]
+                S3Key: !Sub [
+                    "${x0}/${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "KeyPrefix"
+                        ],
+                        x1: !FindInMap [
+                            "Solution",
+                            "Package",
+                            "Analysis"
+                        ]
+                    }
+                ]
+            Layers:
+                - !Ref CoreLibLayer
+            Environment:
+                Variables:
+                    ENV_SOLUTION_UUID: !Select [
+                        2,
+                        !Split [
+                            "/",
+                            !Sub "${AWS::StackId}"
+                        ]
+                    ]
+
+    AnalysisStateMachineRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Action: "sts:AssumeRole"
+                        Principal:
+                            Service: !Sub "states.${AWS::Region}.amazonaws.com"
+            Path: /
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${x1}-analysis-state-machine-role", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ],
+                            x1: !Select [
+                                4,
+                                !Split [
+                                    "-",
+                                    !Select [
+                                        2,
+                                        !Split [
+                                            "/",
+                                            !Sub "${AWS::StackId}"
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                            -
+                                Effect: "Allow"
+                                Action: "lambda:InvokeFunction"
+                                Resource: !Sub [
+                                    "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${x0}-${x1}-*", {
+                                        x0: !FindInMap [
+                                            "Solution",
+                                            "Project",
+                                            "LowerCaseId"
+                                        ],
+                                        x1: !Select [
+                                            4,
+                                            !Split [
+                                                "-",
+                                                !Select [
+                                                    2,
+                                                    !Split [
+                                                        "/",
+                                                        !Sub "${AWS::StackId}"
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    }
+                                ]
+                            # Below polices are needed for Service Integration of nested workflows
+                            # https://docs.aws.amazon.com/step-functions/latest/dg/stepfunctions-iam.html
+                            -
+                                Effect: "Allow"
+                                Action: "states:StartExecution"
+                                Resource:
+                                    - !Ref ImageAnalysisStateMachine
+                                    - !Ref VideoAnalysisStateMachine
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "states:DescribeExecution"
+                                    - "states:StopExecution"
+                                Resource:
+                                    - !Ref ImageAnalysisStateMachine
+                                    - !Ref VideoAnalysisStateMachine
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "events:PutTargets"
+                                    - "events:PutRule"
+                                    - "events:DescribeRule"
+                                Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForStepFunctionsExecutionRule"
+
+    AnalysisStateMachine:
+        Type: AWS::StepFunctions::StateMachine
+        Properties:
+            StateMachineName: !Sub [
+                "${x0}-${x1}-analysis", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            RoleArn: !GetAtt AnalysisStateMachineRole.Arn
+            DefinitionString:
+                !Sub
+                    - |-
+                        {
+                            "StartAt": "Check file type",
+                            "States": {
+                                "Check file type": {
+                                    "Type": "Choice",
+                                    "Choices": [
+                                        {
+                                            "Or": [
+                                                {
+                                                    "Variable": "$.input['key']",
+                                                    "StringMatches": "*.mp4"
+                                                },
+                                                {
+                                                    "Variable": "$.input['key']",
+                                                    "StringMatches": "*.m4v"
+                                                },
+                                                {
+                                                    "Variable": "$.input['key']",
+                                                    "StringMatches": "*.mov"
+                                                },
+                                                {
+                                                    "Variable": "$.input['key']",
+                                                    "StringMatches": "*.MP$"
+                                                },
+                                                {
+                                                    "Variable": "$.input['key']",
+                                                    "StringMatches": "*.M4V"
+                                                },
+                                                {
+                                                    "Variable": "$.input['key']",
+                                                    "StringMatches": "*.MOV"
+                                                }
+                                            ],
+                                            "Next": "Start video analysis"
+                                        },
+                                        {
+                                            "Or": [
+                                                {
+                                                    "Variable": "$.input['key']",
+                                                    "StringMatches": "*.png"
+                                                },
+                                                {
+                                                    "Variable": "$.input['key']",
+                                                    "StringMatches": "*.jpg"
+                                                },
+                                                {
+                                                    "Variable": "$.input['key']",
+                                                    "StringMatches": "*.jpeg"
+                                                },
+                                                {
+                                                    "Variable": "$.input['key']",
+                                                    "StringMatches": "*.PNG"
+                                                },
+                                                {
+                                                    "Variable": "$.input['key']",
+                                                    "StringMatches": "*.JPG"
+                                                },
+                                                {
+                                                    "Variable": "$.input['key']",
+                                                    "StringMatches": "*.JPEG"
+                                                }
+                                            ],
+                                            "Next": "Start image analysis"
+                                        }
+                                    ],
+                                    "Default": "Unsupported file type"
+                                },
+                                "Start video analysis": {
+                                    "Type": "Task",
+                                    "Resource": "arn:aws:states:::states:startExecution.sync",
+                                    "Parameters": {
+                                        "Input": {
+                                            "input.$": "$.input",
+                                            "output.$": "$.output"
+                                        },
+                                        "StateMachineArn": "${VideoAnalysisStateMachine}"
+                                    },
+                                    "Next": "Job completed"
+                                },
+                                "Start image analysis": {
+                                    "Type": "Task",
+                                    "Resource": "arn:aws:states:::states:startExecution.sync",
+                                    "Parameters": {
+                                        "Input": {
+                                            "input.$": "$.input",
+                                            "output.$": "$.output"
+                                        },
+                                        "StateMachineArn": "${ImageAnalysisStateMachine}"
+                                    },
+                                    "Next": "Job completed"
+                                },
+                                "Job completed": {
+                                    "Type": "Task",
+                                    "Resource": "${x0}",
+                                    "Parameters": {
+                                        "state": "job-completed",
+                                        "nestedStateOutput.$": "$"
+                                    },
+                                    "Retry": [
+                                        {
+                                            "ErrorEquals": [
+                                                "States.ALL"
+                                            ],
+                                            "IntervalSeconds": 1,
+                                            "MaxAttempts": 4,
+                                            "BackoffRate": 1.1
+                                        }
+                                    ],
+                                    "End": true
+                                },
+                                "Unsupported file type": {
+                                    "Type": "Fail"
+                                }
+                            }
+                        }
+                    -
+                        {
+                            x0: !GetAtt AnalysisLambda.Arn
+                        }
+
+    ################################################################################
+    #
+    # Amazon CloudWatch Events for Amazon SageMaker Ground Truth Labeling Job
+    # * Labeling Job Status Updater Role
+    # * Labeling Job Status Updater Lambda
+    # * SageMaker Ground Truth Labeling Job State Change Event Rule 
+    #
+    ################################################################################
+    StateUpdaterLogGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+            LogGroupName: !Sub [
+                "/aws/lambda/${x0}-${x1}-${x2}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ],
+                    x2: !FindInMap [
+                        "Workflow",
+                        "StateUpdater",
+                        "Name"
+                    ]
+                }
+            ]
+            RetentionInDays: 30
+
+    StatusUpdaterRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Action: "sts:AssumeRole"
+                        Principal:
+                            Service: "lambda.amazonaws.com"
+            Path: /
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${x1}-labeling-job-status-updater", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ],
+                            x1: !Select [
+                                4,
+                                !Split [
+                                    "-",
+                                    !Select [
+                                        2,
+                                        !Split [
+                                            "/",
+                                            !Sub "${AWS::StackId}"
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                            ## CloudWatch Logs
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "logs:CreateLogGroup"
+                                    - "logs:CreateLogStream"
+                                    - "logs:PutLogEvents"
+                                Resource: !GetAtt StateUpdaterLogGroup.Arn
+                            ## DynamoDB - allow to get and delete step functions execution token
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "dynamodb:DeleteItem"
+                                    - "dynamodb:DescribeTable"
+                                    - "dynamodb:Query"
+                                    - "dynamodb:UpdateItem"
+                                Resource: !GetAtt ServiceTokenTable.Arn
+                            ## Step Functions
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "states:SendTaskSuccess"
+                                    - "states:SendTaskFailure"
+                                Resource: !Ref GTLabelingJobStateMachine
+                            ## SageMaker Ground Truth
+                            -
+                                Effect: "Allow"
+                                Action: "sagemaker:DescribeLabelingJob"
+                                Resource: !Sub "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:labeling-job/*"
+
+    StatusUpdaterLambda:
+        Type: AWS::Lambda::Function
+        Properties:
+            FunctionName: !Sub [
+                "${x0}-${x1}-${x2}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ],
+                    x2: !FindInMap [
+                        "Workflow",
+                        "StateUpdater",
+                        "Name"
+                    ]
+                }
+            ]
+            Description: !Sub [
+                "(${x0}) labeling job status updater", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            Runtime: !FindInMap [
+                "Node",
+                "Runtime",
+                "Version"
+            ]
+            MemorySize: 128
+            Timeout: 900
+            Handler: index.handler
+            Role: !GetAtt StatusUpdaterRole.Arn
+            Code:
+                S3Bucket: !Sub [
+                    "${x0}${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "S3Bucket"
+                        ],
+                        x1: !If [
+                            bSingleRegion,
+                            "",
+                            !Sub "-${AWS::Region}"
+                        ]
+                    }
+                ]
+                S3Key: !Sub [
+                    "${x0}/${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "KeyPrefix"
+                        ],
+                        x1: !FindInMap [
+                            "Solution",
+                            "Package",
+                            "StatusUpdater"
+                        ]
+                    }
+                ]
+            Layers:
+                - !Ref AwsSdkLayer
+                - !Ref CoreLibLayer
+            Environment:
+                Variables:
+                    ENV_SOLUTION_UUID: !Select [
+                        2,
+                        !Split [
+                            "/",
+                            !Sub "${AWS::StackId}"
+                        ]
+                    ]
+                    ENV_LABELING_WORKER_ROLE_ARN: !GetAtt LabelingJobRole.Arn
+                    ENV_SERVICE_TOKEN_TABLE: !Ref ServiceTokenTable
+                    ENV_SERVICE_TOKEN_TABLE_PARTITION_KEY: !FindInMap [
+                        "DynamoDB",
+                        "ServiceToken",
+                        "PartitionKey"
+                    ]
+                    ENV_SERVICE_TOKEN_TABLE_SORT_KEY: !FindInMap [
+                        "DynamoDB",
+                        "ServiceToken",
+                        "SortKey"
+                    ]
+                    ENV_WORKTEAM_ARN: !GetAtt PrivateWorkforceConfiguration.TeamArn
+
+    LabelingJobStatusChangeRule:
+        Type: AWS::Events::Rule
+        Properties:
+            Name: !Sub [
+                "${x0}-${x1}-labeling-job-status-rule", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ],
+                    x1: !Select [
+                        4,
+                        !Split [
+                            "-",
+                            !Select [
+                                2,
+                                !Split [
+                                    "/",
+                                    !Sub "${AWS::StackId}"
+                                ]
+                            ]
+                        ]
+                    ]
+                }
+            ]
+            Description: !Sub [
+                "(${x0}) labeling job status change event", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            EventPattern:
+                source:
+                    - "aws.sagemaker"
+                region:
+                    - !Sub "${AWS::Region}"
+                detail-type:
+                    - "SageMaker Ground Truth Labeling Job State Change"
+                detail:
+                    LabelingJobStatus:
+                        - Completed
+                        - Failed
+                        - Stopped
+            State: ENABLED
+            Targets:
+                -
+                    Id: !Sub "Id-${StatusUpdaterLambda}"
+                    Arn: !GetAtt StatusUpdaterLambda.Arn
+
+    LabelingJobStatusChangePermission:
+        Type: AWS::Lambda::Permission
+        Properties:
+            FunctionName: !Ref StatusUpdaterLambda
+            Action: lambda:InvokeFunction
+            Principal: events.amazonaws.com
+            SourceArn: !GetAtt LabelingJobStatusChangeRule.Arn
+
+
+    ################################################################################
+    #
+    # Web App stack (Conditional)
+    #
+    ################################################################################
+    WebAppStack:
+        Condition: bCreateWebPortal
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: !Sub [
+                "https://${x0}${x1}.s3.amazonaws.com/${x2}/${x3}", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Template",
+                        "S3Bucket"
+                    ],
+                    x1: !If [
+                        bSingleRegion,
+                        "",
+                        !Sub "-${AWS::Region}"
+                    ],
+                    x2: !FindInMap [
+                        "Solution",
+                        "Template",
+                        "KeyPrefix"
+                    ],
+                    x3: !FindInMap [
+                        "Solution",
+                        "Stack",
+                        "WebApp"
+                    ]
+                }
+            ]
+            Parameters:
+                RootStackId: !Select [
+                    4,
+                    !Split [
+                        "-",
+                        !Select [
+                            2,
+                            !Split [
+                                "/",
+                                !Sub "${AWS::StackId}"
+                            ]
+                        ]
+                    ]
+                ]
+                CustomResourceLambdaArn: !GetAtt CustomResourceLambda.Arn
+                SourceBucket: !Ref SourceBucket
+                LogsBucket: !Ref LogsBucket
+                GTLabelingJobStateMachine: !GetAtt GTLabelingJobStateMachine.Name
+                GTWorkforceUserPoolId: !GetAtt PrivateWorkforceConfiguration.UserPool
+                GTWorkforceTeamName: !GetAtt PrivateWorkforceConfiguration.TeamName
+                GTWorkforceTopicArn: !Ref PrivateWorkforceTopic
+                AnalysisStateMachine: !GetAtt AnalysisStateMachine.Name
+                AwsSdkLayer: !Ref AwsSdkLayer
+                CoreLibLayer: !Ref CoreLibLayer
+                PriceClass: !Select [
+                    0,
+                    !Split [
+                        "]",
+                        !Select [
+                            1,
+                            !Split [
+                                "[",
+                                !Ref PriceClass
+                            ]
+                        ]
+                    ]
+                ]
+
+    # Custom::PostUpdateBucketCORS returns
+    #   * Status
+    PostUpdateSourceBucketCORS:
+        Condition: bCreateWebPortal
+        Type: Custom::PostUpdateBucketCORS
+        Properties:
+            ServiceToken: !GetAtt CustomResourceLambda.Arn
+            Data:
+                Bucket: !Ref SourceBucket
+                AllowedOrigins:
+                    - !GetAtt WebAppStack.Outputs.WebsiteUrl
+                    - "https://mturk-console-template-preview-hooks.s3.amazonaws.com"
+                    - "https://s3.amazonaws.com"
+                AllowedMethods:
+                    - HEAD
+                    - GET
+                    - PUT
+                    - POST
+                AllowedHeaders:
+                    - "*"
+                ExposeHeaders:
+                    - Content-Length
+                    - ETag
+                MaxAgeSeconds: 3000
+
+    # Custom::PostCreateSolutionManifest returns
+    #   * Status
+    PostCreateSolutionManifest:
+        Condition: bCreateWebPortal
+        Type: Custom::PostCreateSolutionManifest
+        Properties:
+            ServiceToken: !GetAtt CustomResourceLambda.Arn
+            Web:
+                Bucket: !GetAtt WebAppStack.Outputs.WebBucket
+            Data:
+                SolutionId: !FindInMap [
+                    "Solution",
+                    "Project",
+                    "LowerCaseId"
+                ]
+                Version: !FindInMap [
+                    "Solution",
+                    "Project",
+                    "Version"
+                ]
+                StackName: !Sub "${AWS::StackName}"
+                Region: !Sub "${AWS::Region}"
+                LastUpdated: !GetAtt WebAppStack.Outputs.LastUpdated
+                S3:
+                    Bucket: !Ref SourceBucket
+                    UseAccelerateEndpoint: true
+                ApiEndpoint: !GetAtt WebAppStack.Outputs.RestApiEndpoint
+                Cognito:
+                    UserPoolId: !GetAtt WebAppStack.Outputs.CognitoUserPoolId
+                    ClientId: !GetAtt WebAppStack.Outputs.CognitoAppClientId
+                    IdentityPoolId: !GetAtt WebAppStack.Outputs.CognitoIdentityPoolId
+                    RedirectUri: !GetAtt WebAppStack.Outputs.WebsiteUrl
+                PrivateWorkforce:
+                    UserPoolId: !GetAtt PrivateWorkforceConfiguration.UserPool
+                    UserGroup: !GetAtt PrivateWorkforceConfiguration.UserGroup
+                    TeamName: !GetAtt PrivateWorkforceConfiguration.TeamName
+                StateMachine:
+                    Training:
+                        Name: !GetAtt GTLabelingJobStateMachine.Name
+                    Analysis:
+                        Name: !GetAtt AnalysisStateMachine.Name
+
+    # Custom::CognitoRegisterUser returns
+    #   * Username
+    #   * Status
+    CognitoRegisterUser:
+        Condition: bRegisterUser
+        DependsOn: PostCreateSolutionManifest
+        Type: Custom::CognitoRegisterUser
+        Properties:
+            ServiceToken: !GetAtt CustomResourceLambda.Arn
+            Data:
+                UserPoolId: !GetAtt WebAppStack.Outputs.CognitoUserPoolId
+                Email: !Ref Email
+
+Outputs:
+    # Layers
+    AwsSdkLayerArn:
+        Value: !Ref AwsSdkLayer
+        Description: Lambda Layer (AWS SDK Library)
+    CoreLibLayerArn:
+        Value: !Ref CoreLibLayer
+        Description: Lambda Layer (Core Library)
+    FFmpegLayerArn:
+        Value: !Ref FFmpegLayer
+        Description: Lambda Layer (FFmpeg)
+    # Custom Resource
+    CustomResourceRoleArn:
+        Value: !GetAtt CustomResourceRole.Arn
+        Description: IAM Role Arn (Custom Resource)
+    CustomResourceLambdaArn:
+        Value: !GetAtt CustomResourceLambda.Arn
+        Description: Lambda Arn (Custom Resource)
+    ## Buckets
+    LogsBucket:
+        Value: !Ref LogsBucket
+        Description: Bucket (Logs)
+    SourceBucket:
+        Value: !Ref SourceBucket
+        Description: Bucket (Source)
+    ## CodeBuild
+    CodeBuildFFmpeg:
+        Value: !GetAtt CodeBuildFFmpegStack.Outputs.CodeBuild
+        Description: CodeBuild FFmpeg
+    ## Step Functions
+    GTLabelingJobStateMachineArn:
+        Value: !Ref GTLabelingJobStateMachine
+        Description: Step Functions State Machine (Ground Truth Labeling Job)
+    CustomLabelsTrainingStateMachineArn:
+        Value: !Ref CustomLabelsTrainingStateMachine
+        Description: Step Functions State Machine (Custom Labels Training Job)
+    CustomLabelsStartModelStateMachineArn:
+        Value: !Ref CustomLabelsStartModelStateMachine
+        Description: Step Functions State Machine (Custom Labels Start Model)
+    ## Private Workforce Team
+    PrivateWorkforceUserPool:
+        Value: !GetAtt PrivateWorkforceConfiguration.UserPool
+        Description: User Pool (Ground Truth Private Workforce)
+    PrivateWorkforceAppClientId:
+        Value: !GetAtt PrivateWorkforceConfiguration.ClientId
+        Description: App Client Id (Ground Truth Private Workforce)
+    PrivateWorkforceUserGroup:
+        Value: !GetAtt PrivateWorkforceConfiguration.UserGroup
+        Description: User Group (Ground Truth Private Workforce)
+    PrivateWorkforceWorkteamName:
+        Value: !GetAtt PrivateWorkforceConfiguration.TeamName
+        Description: Workteam Name (Ground Truth Private Workforce)
+    PrivateWorkforceWorkteamArn:
+        Value: !GetAtt PrivateWorkforceConfiguration.TeamArn
+        Description: Workteam Arn (Ground Truth Private Workforce)
+    # WebApp Stack
+    WebsiteUrl:
+        Condition: bCreateWebPortal
+        Value: !GetAtt WebAppStack.Outputs.WebsiteUrl
+        Description: "Website URL"
+    RestApiEndpoint:
+        Condition: bCreateWebPortal
+        Value: !GetAtt WebAppStack.Outputs.RestApiEndpoint
+        Description: RESTful API Endpoint

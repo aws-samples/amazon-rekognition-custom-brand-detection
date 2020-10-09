@@ -1,0 +1,196 @@
+{
+    "StartAt": "Probe video",
+    "States": {
+        "Probe video": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "probe-video",
+                "input.$": "$.input"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 1.2
+                }
+            ],
+            "Next": "Extract keyframes (All)"
+        },
+        "Extract keyframes (All)": {
+            "Type": "Map",
+            "ItemsPath": "$.output['extract-keyframes'].iterators",
+            "MaxConcurrency": 20,
+            "Iterator": {
+                "StartAt": "Extract keyframes",
+                "States": {
+                    "Extract keyframes": {
+                        "Type": "Task",
+                        "Resource": "${x0}",
+                        "Parameters": {
+                            "state": "extract-keyframes",
+                            "input.$": "$"
+                        },
+                        "Retry": [
+                            {
+                                "ErrorEquals": [
+                                    "States.ALL"
+                                ],
+                                "IntervalSeconds": 1,
+                                "MaxAttempts": 2,
+                                "BackoffRate": 1.2
+                            }
+                        ],
+                        "End": true
+                    }
+                }
+            },
+            "ResultPath": "$.output['extract-keyframes'].iterators",
+            "Next": "Extract keyframes (Postproc)"
+        },
+        "Extract keyframes (Postproc)": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "extract-keyframes-postproc",
+                "input.$": "$.input",
+                "output.$": "$.output"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 1.2
+                }
+            ],
+            "Next": "Parallel process"
+        },
+        "Parallel process": {
+            "Type": "Parallel",
+            "Branches": [
+                {
+                    "StartAt": "Create sprite images (Preproc)",
+                    "States": {
+                        "Create sprite images (Preproc)": {
+                            "Type": "Task",
+                            "Resource": "${x0}",
+                            "Parameters": {
+                                "state": "create-sprite-images-preproc",
+                                "input.$": "$.input",
+                                "output.$": "$.output"
+                            },
+                            "Retry": [
+                                {
+                                    "ErrorEquals": [
+                                        "States.ALL"
+                                    ],
+                                    "IntervalSeconds": 1,
+                                    "MaxAttempts": 2,
+                                    "BackoffRate": 1.2
+                                }
+                            ],
+                            "Next": "Create sprite images (All)"
+                        },
+                        "Create sprite images (All)": {
+                            "Type": "Map",
+                            "ItemsPath": "$.output['create-sprite-images'].iterators",
+                            "MaxConcurrency": 60,
+                            "Iterator": {
+                                "StartAt": "Create sprite images",
+                                "States": {
+                                    "Create sprite images": {
+                                        "Type": "Task",
+                                        "Resource": "${x0}",
+                                        "Parameters": {
+                                            "state": "create-sprite-images",
+                                            "input.$": "$"
+                                        },
+                                        "End": true
+                                    }
+                                }
+                            },
+                            "ResultPath": "$.output['create-sprite-images'].iterators",
+                            "End": true
+                        }
+                    }
+                },
+                {
+                    "StartAt": "Start and wait custom labels model",
+                    "States": {
+                        "Start and wait custom labels model": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::states:startExecution.sync",
+                            "Parameters": {
+                                "Input": {
+                                    "input.$": "$.input",
+                                    "output.$": "$.output"
+                                },
+                                "StateMachineArn": "${CustomLabelsStartModelStateMachine}"
+                            },
+                            "Next": "Detect custom labels"
+                        },
+                        "Detect custom labels": {
+                            "Type": "Task",
+                            "Resource": "${x0}",
+                            "Parameters": {
+                                "state": "detect-custom-labels",
+                                "nestedStateOutput.$": "$"
+                            },
+                            "Retry": [
+                                {
+                                    "ErrorEquals": [
+                                        "States.ALL"
+                                    ],
+                                    "IntervalSeconds": 1,
+                                    "MaxAttempts": 4,
+                                    "BackoffRate": 1.1
+                                }
+                            ],
+                            "Next": "More frames?"
+                        },
+                        "More frames?": {
+                            "Type": "Choice",
+                            "Choices": [
+                                {
+                                    "Variable": "$.output['detect-custom-labels'].status",
+                                    "StringEquals": "completed",
+                                    "Next": "Custom labels completed"
+                                }
+                            ],
+                            "Default": "Detect custom labels"
+                        },
+                        "Custom labels completed": {
+                            "Type": "Succeed"
+                        }
+                    }
+                }
+            ],
+            "Next": "Map frames to shots"
+        },
+        "Map frames to shots": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "map-frames-shots",
+                "multiStateOutputs.$": "$"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 4,
+                    "BackoffRate": 1.1
+                }
+            ],
+            "End": true
+        }
+    }
+}

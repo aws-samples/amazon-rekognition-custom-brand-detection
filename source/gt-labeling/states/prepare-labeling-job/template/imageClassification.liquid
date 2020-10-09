@@ -1,0 +1,16 @@
+<script src="https://assets.crowd.aws/crowd-html-elements.js"></script>
+<crowd-form>
+  <crowd-image-classifier
+    name="crowd-image-classifier"
+    src="{{ task.input.taskObject | grant_read_access }}"
+    header="Select a label (concept) that best represents the image."
+    categories="{{ task.input.labels | to_json | escape }}"
+  >
+    <full-instructions header="Image classification instructions">
+      <ol><li><strong>Read</strong> the task carefully and inspect the image.</li><li><strong>Read</strong> the options and review the examples provided to understand more about the labels.</li><li><strong>Choose</strong> the appropriate label that best suits the image.</li></ol>
+    </full-instructions>
+    <short-instructions>
+      <h3><span style="color: rgb(0, 138, 0);">Good example</span></h3><p>Enter description to explain the correct label to the workers</p><p><img src="https://dfgej61ul7ygg.cloudfront.net/942cc0c8-4d4c-4986-9b21-685d79704e6d/src/images/quick-instructions-example-placeholder.png" style="max-width:100%"></p><h3><span style="color: rgb(230, 0, 0);">Bad example</span></h3><p>Enter description of an incorrect label</p><p><img src="https://dfgej61ul7ygg.cloudfront.net/942cc0c8-4d4c-4986-9b21-685d79704e6d/src/images/quick-instructions-example-placeholder.png" style="max-width:100%"></p>
+    </short-instructions>
+  </crowd-image-classifier>
+</crowd-form>

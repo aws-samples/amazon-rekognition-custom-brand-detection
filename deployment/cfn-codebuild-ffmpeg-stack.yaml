@@ -1,0 +1,407 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: (CodeBuild FFmpeg stack) Create Amazon CodeBuild project to build FFmpeg on-the-fly and deploy the FFmpeg Lambda Layer package to an Amazon S3 Bucket.
+
+Mappings:
+    Solution:
+        Project:
+            Id: "%SID%"
+            LowerCaseId: "%SMALLCAP_SID%"
+            Version: "%VERSION%"
+        Template:
+            S3Bucket: "%BUCKET%"
+            KeyPrefix: "%KEYPREFIX%"
+            SingleRegion: "%SINGLE_REGION%"
+        Package:
+            CustomResourcesCodeBuild: "%PKG_CODEBUILD_CUSTOM_RESOURCES%"
+            FFmpegCodeBuild: "%PKG_CODEBUILD_FFMPEG%"
+    Node:
+        Runtime:
+            Version: nodejs10.x
+    CodeBuild:
+        Image:
+            Name: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+            Type: LINUX_CONTAINER
+    FFmpeg:
+        Release:
+            Version: n4.3.1
+
+Parameters:
+    RootStackId:
+        Type: String
+        Description: parent stack Id
+    SourceBucket:
+        Type: String
+        Description: "stores source files"
+        AllowedPattern: "[a-z][a-z0-9-_]*"
+
+Metadata:
+    AWS::CloudFormation::Interface:
+        ParameterGroups:
+            -
+                Label:
+                    default: "Parent Stack Configuration"
+                Parameters:
+                    - RootStackId
+                    - SourceBucket
+        ParameterLabels:
+            RootStackId:
+                default: "Stack Id"
+            SourceBucket:
+                default: "Source Bucket"
+
+Conditions:
+    bSingleRegion: !Equals [
+        !FindInMap [
+            "Solution",
+            "Template",
+            "SingleRegion"
+        ],
+        "true"
+    ]
+
+Resources:
+    ################################################################################
+    #
+    # CodeBuild to build FFmpeg Lambda Layer on-the-fly
+    # * IAM Role
+    # * CodeBuild Project
+    #
+    ################################################################################
+    CodeBuildRole:
+        Type: AWS::IAM::Role
+        Properties:
+            Path: /
+            AssumeRolePolicyDocument:
+                Statement:
+                    -
+                        Action: sts:AssumeRole
+                        Effect: Allow
+                        Principal:
+                            Service: codebuild.amazonaws.com
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${RootStackId}-codebuild-ffmpeg", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Statement:
+                            ## CloudWatch logs
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "logs:CreateLogGroup"
+                                    - "logs:CreateLogStream"
+                                    - "logs:PutLogEvents"
+                                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild:*"
+                            ## S3 - allows CodeBuild to download FFmpeg skeleton package
+                            -
+                                Effect: "Allow"
+                                Action: "s3:GetObject"
+                                Resource: !Sub [
+                                    "arn:aws:s3:::${x0}${x1}/*", {
+                                        x0: !FindInMap [
+                                            "Solution",
+                                            "Template",
+                                            "S3Bucket"
+                                        ],
+                                        x1: !If [
+                                            bSingleRegion,
+                                            "",
+                                            !Sub "-${AWS::Region}"
+                                        ]
+                                    }
+                                ]
+                            ## S3 - allows CodeBuild to upload the FFmpeg layer package
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "s3:GetObject"
+                                    - "s3:PutObject"
+                                Resource: !Sub "arn:aws:s3:::${SourceBucket}/*"
+
+    # To start a build, it requires the following environment variables
+    # * ENV_DEPLOY_BUCKET := s3 url of the output artifacts
+    # * ENV_FFMPEG_CODEBUILD_PKG := ffmpeg skeleton package that contains package.json and index.js 
+    # * ENV_FFMPEG_STABLE_RELEASE := stable release version
+    CodeBuild:
+        Type: AWS::CodeBuild::Project
+        Properties:
+            Name: !Sub [
+                "${x0}-${RootStackId}-ffmpeg-lgpl-v2_1", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            Description: "Clone and build FFmpeg LGPLv2.1 Lambda Layer"
+            ServiceRole: !Sub ${CodeBuildRole.Arn}
+            Source:
+                Type: NO_SOURCE
+                BuildSpec: |
+                    version: 0.2
+                    phases:
+                        install:
+                            commands:
+                                - echo "== Check Environment Variables =="
+                                - if [ -z "$ENV_DEPLOY_BUCKET" ]; then echo "missing ENV_DEPLOY_BUCKET environment variable"; exit 1; fi
+                                - if [ -z "$ENV_FFMPEG_CODEBUILD_PKG" ]; then echo "missing ENV_FFMPEG_CODEBUILD_PKG environment variable"; exit 1; fi
+                                - if [ -z "$ENV_FFMPEG_STABLE_RELEASE" ]; then echo "missing ENV_FFMPEG_STABLE_RELEASE environment variable"; exit 1; fi
+                                - echo "== Download CodeBuild Package =="
+                                - aws s3 cp "$ENV_FFMPEG_CODEBUILD_PKG" ffmpeg-codebuild.zip
+                                - unzip ffmpeg-codebuild.zip -d sandbox
+                                - cd sandbox
+                        build:
+                            commands:
+                                - echo "== Starting build $(date) in $(pwd) =="
+                                - /bin/bash build-ffmpeg-lgpl.sh --deploy "$ENV_DEPLOY_BUCKET" --version "$ENV_FFMPEG_STABLE_RELEASE" --signal "$ENV_CFN_SIGNAL_URL_BASE64"
+                        post_build:
+                            commands:
+                                - echo "== Nothing to do in Post build =="
+            Environment:
+                ComputeType: BUILD_GENERAL1_MEDIUM
+                Image: !FindInMap [
+                    "CodeBuild",
+                    "Image",
+                    "Name"
+                ]
+                Type: !FindInMap [
+                    "CodeBuild",
+                    "Image",
+                    "Type"
+                ]
+            Artifacts:
+                Type: NO_ARTIFACTS
+            EncryptionKey: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/s3"
+            TimeoutInMinutes: 60
+            QueuedTimeoutInMinutes: 60
+            LogsConfig:
+                CloudWatchLogs:
+                    GroupName: /aws/codebuild
+                    StreamName: !Sub [
+                        "${x0}-${RootStackId}-ffmpeg", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ]
+                        }
+                    ]
+                    Status: ENABLED
+
+    ################################################################################
+    #
+    # CloudFormation Custom Resource lambda
+    # * to start a CodeBuild to build ffmpeg lambda layer
+    #
+    ################################################################################
+    CustomResourcesCodeBuildRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Action: "sts:AssumeRole"
+                        Principal:
+                            Service: "lambda.amazonaws.com"
+            Path: !Sub [
+                "/${x0}/", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            Policies:
+                -
+                    PolicyName: !Sub [
+                        "${x0}-${RootStackId}-custom-resources-start-build", {
+                            x0: !FindInMap [
+                                "Solution",
+                                "Project",
+                                "LowerCaseId"
+                            ]
+                        }
+                    ]
+                    PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                            ## CloudWatch Logs
+                            -
+                                Effect: "Allow"
+                                Action:
+                                    - "logs:CreateLogGroup"
+                                    - "logs:CreateLogStream"
+                                    - "logs:PutLogEvents"
+                                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+                            ## CodeBuild
+                            -
+                                Effect: "Allow"
+                                Action: "codebuild:StartBuild"
+                                Resource: !GetAtt CodeBuild.Arn
+
+    CustomResourcesCodeBuildLambda:
+        Type: AWS::Lambda::Function
+        Properties:
+            Description: !Sub [
+                "(${x0}) custom resources start build", {
+                    x0: !FindInMap [
+                        "Solution",
+                        "Project",
+                        "LowerCaseId"
+                    ]
+                }
+            ]
+            Runtime: !FindInMap [
+                "Node",
+                "Runtime",
+                "Version"
+            ]
+            MemorySize: 128
+            Timeout: 900
+            Handler: index.handler
+            Role: !GetAtt CustomResourcesCodeBuildRole.Arn
+            Code:
+                S3Bucket: !Sub [
+                    "${x0}${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "S3Bucket"
+                        ],
+                        x1: !If [
+                            bSingleRegion,
+                            "",
+                            !Sub "-${AWS::Region}"
+                        ]
+                    }
+                ]
+                S3Key: !Sub [
+                    "${x0}/${x1}", {
+                        x0: !FindInMap [
+                            "Solution",
+                            "Template",
+                            "KeyPrefix"
+                        ],
+                        x1: !FindInMap [
+                            "Solution",
+                            "Package",
+                            "CustomResourcesCodeBuild"
+                        ]
+                    }
+                ]
+
+    StartBuild:
+        Type: Custom::StartBuild
+        Properties:
+            ServiceToken: !GetAtt CustomResourcesCodeBuildLambda.Arn
+            Data:
+                projectName: !Ref CodeBuild
+                environmentVariablesOverride:
+                    -
+                        name: ENV_FFMPEG_CODEBUILD_PKG
+                        value: !Sub [
+                            "s3://${x0}${x1}/${x2}/${x3}", {
+                                x0: !FindInMap [
+                                    "Solution",
+                                    "Template",
+                                    "S3Bucket"
+                                ],
+                                x1: !If [
+                                    bSingleRegion,
+                                    "",
+                                    !Sub "-${AWS::Region}"
+                                ],
+                                x2: !FindInMap [
+                                    "Solution",
+                                    "Template",
+                                    "KeyPrefix"
+                                ],
+                                x3: !FindInMap [
+                                    "Solution",
+                                    "Package",
+                                    "FFmpegCodeBuild"
+                                ]
+                            }
+                        ]
+                        type: PLAINTEXT
+                    -
+                        name: ENV_FFMPEG_STABLE_RELEASE
+                        value: !FindInMap [
+                            "FFmpeg",
+                            "Release",
+                            "Version"
+                        ]
+                        type: PLAINTEXT
+                    -
+                        name: ENV_DEPLOY_BUCKET
+                        value: !Ref SourceBucket
+                        type: PLAINTEXT
+                    -
+                        name: ENV_CFN_SIGNAL_URL_BASE64
+                        value: !Base64
+                            Fn::Sub: ${StartBuildWaitHandler}
+                        type: PLAINTEXT
+
+    StartBuildWaitHandler:
+        Type: AWS::CloudFormation::WaitConditionHandle
+
+    StartBuildWaitCondition:
+        Type: AWS::CloudFormation::WaitCondition
+        DependsOn: StartBuild
+        Properties:
+            Count: 1
+            Handle: !Ref StartBuildWaitHandler
+            Timeout: "3600"
+
+    PostBuild:
+        Type: Custom::PostBuild
+        Properties:
+            ServiceToken: !GetAtt CustomResourcesCodeBuildLambda.Arn
+            Data:
+                WaitConditionData: !GetAtt StartBuildWaitCondition.Data
+
+    ################################################################################
+    #
+    # To force update FFmpeg layer,
+    # define new WaitConditionHandle and WaitCondition resources. Otherwise,
+    # CFN Update stack won't wait for CodeBuild to complete; thus, it won't
+    # update FFmpeg Lambda Layer properly.
+    # (Do not remove the original WaitConditionHandle and WaitCondition resources!)
+    #
+    ################################################################################
+    #StartBuildWaitHandlerUpdateV2:
+    #    Type: AWS::CloudFormation::WaitConditionHandle
+
+    #StartBuildWaitConditionUpdateV2:
+    #    Type: AWS::CloudFormation::WaitCondition
+    #    DependsOn: StartBuild
+    #    Properties:
+    #        Count: 1
+    #        Handle: !Ref StartBuildWaitHandlerUpdateV2
+    #        Timeout: "3600"
+
+Outputs:
+    CodeBuildArn:
+        Value: !GetAtt CodeBuild.Arn
+        Description: Arn of Build FFmpeg LGPLv2.1 CodeBuild Project
+    CodeBuild:
+        Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/codesuite/codebuild/${AWS::AccountId}/projects/${CodeBuild}/history?region=${AWS::Region}"
+        Description: Build FFmpeg LGPLv2.1 Lambda Layer CodeBuild Project
+    FFmpegLayerBucket:
+        Value: !GetAtt PostBuild.Bucket
+        Description: FFmpeg Lambda Layer (Bucket)
+    FFmpegLayerKey:
+        Value: !GetAtt PostBuild.Key
+        Description: FFmpeg Lambda Layer (Key)

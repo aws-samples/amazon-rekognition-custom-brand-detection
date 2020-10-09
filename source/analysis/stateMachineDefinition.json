@@ -1,0 +1,115 @@
+{
+    "StartAt": "Check file type",
+    "States": {
+        "Check file type": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Or": [
+                        {
+                            "Variable": "$.input['key']",
+                            "StringMatches": "*.mp4"
+                        },
+                        {
+                            "Variable": "$.input['key']",
+                            "StringMatches": "*.m4v"
+                        },
+                        {
+                            "Variable": "$.input['key']",
+                            "StringMatches": "*.mov"
+                        },
+                        {
+                            "Variable": "$.input['key']",
+                            "StringMatches": "*.MP$"
+                        },
+                        {
+                            "Variable": "$.input['key']",
+                            "StringMatches": "*.M4V"
+                        },
+                        {
+                            "Variable": "$.input['key']",
+                            "StringMatches": "*.MOV"
+                        }
+                    ],
+                    "Next": "Start video analysis"
+                },
+                {
+                    "Or": [
+                        {
+                            "Variable": "$.input['key']",
+                            "StringMatches": "*.png"
+                        },
+                        {
+                            "Variable": "$.input['key']",
+                            "StringMatches": "*.jpg"
+                        },
+                        {
+                            "Variable": "$.input['key']",
+                            "StringMatches": "*.jpeg"
+                        },
+                        {
+                            "Variable": "$.input['key']",
+                            "StringMatches": "*.PNG"
+                        },
+                        {
+                            "Variable": "$.input['key']",
+                            "StringMatches": "*.JPG"
+                        },
+                        {
+                            "Variable": "$.input['key']",
+                            "StringMatches": "*.JPEG"
+                        }
+                    ],
+                    "Next": "Start image analysis"
+                }
+            ],
+            "Default": "Unsupported file type"
+        },
+        "Start video analysis": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::states:startExecution.sync",
+            "Parameters": {
+                "Input": {
+                    "input.$": "$.input",
+                    "output.$": "$.output"
+                },
+                "StateMachineArn": "${VideoAnalysisStateMachine}"
+            },
+            "Next": "Job completed"
+        },
+        "Start image analysis": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::states:startExecution.sync",
+            "Parameters": {
+                "Input": {
+                    "input.$": "$.input",
+                    "output.$": "$.output"
+                },
+                "StateMachineArn": "${ImageAnalysisStateMachine}"
+            },
+            "Next": "Job completed"
+        },
+        "Job completed": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "job-completed",
+                "nestedStateOutput.$": "$"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 4,
+                    "BackoffRate": 1.1
+                }
+            ],
+            "End": true
+        },
+        "Unsupported file type": {
+            "Type": "Fail"
+        }
+    }
+}

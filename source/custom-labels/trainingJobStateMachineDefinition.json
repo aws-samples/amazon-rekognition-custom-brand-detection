@@ -1,0 +1,83 @@
+{
+    "StartAt": "Create project version",
+    "States": {
+        "Create project version": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "create-project-version",
+                "input.$": "$.input"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 1.2
+                }
+            ],
+            "Next": "Check training job"
+        },
+        "Check training job": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "check-training-job",
+                "input.$": "$.input",
+                "output.$": "$.output"
+            },
+            "Next": "Training job completed?",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 1.2
+                }
+            ]
+        },
+        "Training job completed?": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Variable": "$.output['check-training-job'].status",
+                    "StringEquals": "TRAINING_IN_PROGRESS",
+                    "Next": "Wait for training job (15mins)"
+                },
+                {
+                    "Or": [
+                        {
+                            "Variable": "$.output['check-training-job'].status",
+                            "StringEquals": "TRAINING_FAILED"
+                        },
+                        {
+                            "Variable": "$.output['check-training-job'].status",
+                            "StringEquals": "FAILED"
+                        },
+                        {
+                            "Variable": "$.output['check-training-job'].status",
+                            "StringEquals": "DELETING"
+                        }
+                    ],
+                    "Next": "Training job failed"
+                }
+            ],
+            "Default": "Training job succeeded"
+        },
+        "Wait for training job (15mins)": {
+            "Type": "Wait",
+            "Seconds": 900,
+            "Next": "Check training job"
+        },
+        "Training job failed": {
+            "Type": "Fail"
+        },
+        "Training job succeeded": {
+            "Type": "Succeed"
+        }
+    }
+}

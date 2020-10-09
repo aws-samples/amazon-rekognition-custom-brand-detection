@@ -1,0 +1,211 @@
+{
+    "StartAt": "Probe video (Preproc)",
+    "States": {
+        "Probe video (Preproc)": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "probe-video-preproc",
+                "input.$": "$.input"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 1.2
+                }
+            ],
+            "Next": "Probe video (All)"
+        },
+        "Probe video (All)": {
+            "Type": "Map",
+            "ItemsPath": "$.output['probe-video'].iterators",
+            "MaxConcurrency": 20,
+            "Iterator": {
+                "StartAt": "Probe video",
+                "States": {
+                    "Probe video": {
+                        "Type": "Task",
+                        "Resource": "${x0}",
+                        "Parameters": {
+                            "state": "probe-video",
+                            "input.$": "$"
+                        },
+                        "Retry": [
+                            {
+                                "ErrorEquals": [
+                                    "States.ALL"
+                                ],
+                                "IntervalSeconds": 1,
+                                "MaxAttempts": 2,
+                                "BackoffRate": 1.2
+                            }
+                        ],
+                        "End": true
+                    }
+                }
+            },
+            "ResultPath": "$.output['probe-video'].iterators",
+            "Next": "Extract keyframes (Preproc)"
+        },
+        "Extract keyframes (Preproc)": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "extract-keyframes-preproc",
+                "input.$": "$.input",
+                "output.$": "$.output"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 1.2
+                }
+            ],
+            "Next": "Extract keyframes (All)"
+        },
+        "Extract keyframes (All)": {
+            "Type": "Map",
+            "ItemsPath": "$.output['extract-keyframes'].iterators",
+            "MaxConcurrency": 20,
+            "Iterator": {
+                "StartAt": "Extract keyframes",
+                "States": {
+                    "Extract keyframes": {
+                        "Type": "Task",
+                        "Resource": "${x0}",
+                        "Parameters": {
+                            "state": "extract-keyframes",
+                            "input.$": "$"
+                        },
+                        "Retry": [
+                            {
+                                "ErrorEquals": [
+                                    "States.ALL"
+                                ],
+                                "IntervalSeconds": 1,
+                                "MaxAttempts": 2,
+                                "BackoffRate": 1.2
+                            }
+                        ],
+                        "End": true
+                    }
+                }
+            },
+            "ResultPath": "$.output['extract-keyframes'].iterators",
+            "Next": "Prepare labeling job"
+        },
+        "Prepare labeling job": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "prepare-labeling-job",
+                "input.$": "$.input",
+                "output.$": "$.output"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 1.2
+                }
+            ],
+            "Next": "Start and wait labeling job"
+        },
+        "Start and wait labeling job": {
+            "Type": "Task",
+            "Resource":"arn:aws:states:::lambda:invoke.waitForTaskToken",
+            "Parameters": {
+                "FunctionName": "${a0}",
+                "Payload": {
+                    "token.$":"$$.Task.Token",
+                    "state": "start-labeling-job",
+                    "input.$": "$.input",
+                    "output.$": "$.output"
+                }
+            },
+            "TimeoutSeconds": 345600,
+            "Next": "Collect annotations"
+        },
+        "Collect annotations": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "collect-annotations",
+                "input.$": "$.input",
+                "output.$": "$.output"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 1.2
+                }
+            ],
+            "Next": "Nested states"
+        },
+        "Nested states": {
+            "Type": "Parallel",
+            "Branches": [
+                {
+                    "StartAt": "Start and wait custom labels",
+                    "States": {
+                        "Start and wait custom labels": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::states:startExecution.sync",
+                            "Parameters": {
+                                "Input": {
+                                    "input.$": "$.output['collect-annotations'].output"
+                                },
+                                "StateMachineArn": "${CustomLabelsTrainingStateMachine}"
+                            },
+                            "End": true
+                        }
+                    }
+                },
+                {
+                    "StartAt": "Passthrough",
+                    "States": {
+                        "Passthrough": {
+                            "Type": "Pass",
+                            "End": true
+                        }
+                    }
+                }
+            ],
+            "Next": "Job completed"
+        },
+        "Job completed": {
+            "Type": "Task",
+            "Resource": "${x0}",
+            "Parameters": {
+                "state": "job-completed",
+                "multiStateOutputs.$": "$"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 1.2
+                }
+            ],
+            "End": true
+        }
+    }
+}
