@@ -5,6 +5,7 @@
 The Analysis State Machine simply checks the type of the input file and starts the Video Analysis nested state machine or the Image Analysis (nested) state machine accordingly.
 
 The diagram shows the training state machine.
+
 ![Analysis State Machine Diagram](../../deployment/images/analysis-state-machine.jpg)
 
 
