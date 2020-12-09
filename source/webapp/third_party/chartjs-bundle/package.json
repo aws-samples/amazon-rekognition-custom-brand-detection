@@ -6,8 +6,8 @@
   "scripts": {
     "test": "echo \"bundle exists\" && exit 0",
     "build:clean": "rm -rf dist temp && mkdir -p dist/js dist/css temp",
-    "build:download": "cd temp && wget --no-check-certificate https://github.com/chartjs/Chart.js/releases/download/v2.9.3/Chart.js.zip -O chartjs.zip",
-    "build:unpack": "cd temp && unzip chartjs.zip",
+    "build:download": "cd temp && wget -q --no-check-certificate https://github.com/chartjs/Chart.js/releases/download/v2.9.3/Chart.js.zip -O chartjs.zip",
+    "build:unpack": "cd temp && unzip -q chartjs.zip",
     "build:copy": "cp -v temp/Chart.min.js ./dist/js && cp -v temp/Chart.min.css ./dist/css",
     "build:postbuild": "rm -rf temp",
     "build": "npm-run-all -s build:clean build:download build:unpack build:copy build:postbuild"

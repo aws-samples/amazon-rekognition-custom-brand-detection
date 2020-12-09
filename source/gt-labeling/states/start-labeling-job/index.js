@@ -33,7 +33,11 @@ class StateStartLabelingJob extends mxBaseState(class {}) {
     const sagemaker = new AWS.SageMaker({
       apiVersion: '2017-07-24',
     });
-    const response = await sagemaker.createLabelingJob(params).promise();
+    const response = await sagemaker.createLabelingJob(params).promise()
+      .catch((e) => {
+        console.error(e);
+        throw e;
+      });
 
     return {
       jobId: response.LabelingJobArn,

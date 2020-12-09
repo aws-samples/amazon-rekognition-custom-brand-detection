@@ -208,15 +208,17 @@ export default class CognitoConnector {
       },
     };
 
-    const credentials = new AWS.CognitoIdentityCredentials(params, {
-      region: CognitoConnector.Constants.Region,
+    const identityCredentials = new AWS.CognitoIdentityCredentials(params, {
+      region: SolutionManifest.Region,
     });
 
-    return credentials.getPromise().then(() => {
-      AWS.config.credentials = credentials;
-      AWS.config.region = CognitoConnector.Constants.Region;
-      this.monitorSession(idToken.getExpiration());
-      return credentials;
+    return new Promise((resolve) => {
+      identityCredentials.getPromise().then(() => {
+        AWS.config.credentials = identityCredentials;
+        AWS.config.region = SolutionManifest.Region;
+        this.monitorSession(idToken.getExpiration());
+        resolve(identityCredentials);
+      });
     });
   }
 

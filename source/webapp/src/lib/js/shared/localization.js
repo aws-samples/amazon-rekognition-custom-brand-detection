@@ -147,7 +147,7 @@ export default class Localization {
           SessionExpired: 'Session expired. Please sign in again.',
           /* label dataset */
           InvalidProjectName: 'Invalid project name. Make sure the project name contains only alphnumeric and dash characters.',
-          InvalidLabel: 'Invalid label name. Maker sure the label name contains only alphnumeric, space, underscore, and dash characters.',
+          InvalidLabel: 'Invalid label name. Label name can only contain alphnumeric, space, underscore, and dash characters and maximum 16 characters.',
           InvalidEmail: 'Invalid email address',
           MaxNumOfLabels: 'You can add at most 250 labels.',
           NoDataset: 'Please drag and drop video and/or image files to the drop zone area to start.',

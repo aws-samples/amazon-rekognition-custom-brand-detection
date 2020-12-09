@@ -139,10 +139,10 @@ export default class MainView {
       .html($('<i/>').addClass('fas fa-user-circle')
         .css('font-size', '2rem'));
     logout.tooltip();
-
-    logout.off('click').click((event) =>
-      window.location.reload());
-
+    logout.off('click').click(() => {
+      this.cognito.signOut();
+      return window.location.reload();
+    });
     return logout;
   }
 

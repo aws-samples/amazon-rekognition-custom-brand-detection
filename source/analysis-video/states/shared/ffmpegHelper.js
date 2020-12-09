@@ -131,7 +131,7 @@ class FFmpegHelper {
       '-vsync',
       0,
       '-q:v',
-      1,
+      2,
       `${outDir}/%d.jpg`,
     ];
     const response = CHILD.spawnSync(`${FFMPEG.PATH}/ffmpeg`, [].concat(common, input, output), options);

@@ -263,7 +263,7 @@ export default class PrepareDatasetSlideComponent extends mxReadable(mxDropzone(
       .attr('data-attr-type', 'label')
       .attr('type', 'text')
       .attr('placeholder', '(Label)')
-      .attr('pattern', '^[a-zA-Z0-9 _-]{0,}$');
+      .attr('pattern', '^[a-zA-Z0-9 _-]{0,16}$');
     const removeBtn = $('<button/>').addClass('btn btn-secondary ml-1')
       .append($('<i/>').addClass('far fa-times-circle'));
 

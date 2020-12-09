@@ -8,7 +8,7 @@ const {
 } = require('core-lib');
 const BaseState = require('../shared/baseState');
 
-const DETECT_CUSTOM_LABELS_TPS = 5;
+const DETECT_CUSTOM_LABELS_TPS = 1;
 const SECONDS_30 = 30;
 const SECONDS_2MINS = 120;
 

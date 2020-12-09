@@ -61,20 +61,24 @@ class BoundingBoxAnnotations extends BaseAnnotations {
       height,
     ] = await this.getFrameWxH(frameSequence.bucket, key);
 
-    // get consolidated annotation results
+    // get consolidated annotation results (SeqLabel.json)
     tmp = dataset[attributeName].slice('s3://'.length).split('/');
     bucket = tmp.shift();
     key = tmp.join('/');
 
     const metadata = dataset[`${attributeName}-metadata`];
-    const annotations = await S3Utils.getObject(bucket, key)
+    const seqLabel = await S3Utils.getObject(bucket, key)
       .then(data => JSON.parse(data.Body));
 
     const annotationResults = [];
     const date = new Date().toISOString();
-    while (annotations['detection-annotations'].length) {
-      const perFrameAnnotation = annotations['detection-annotations'].shift();
-      const sourceRef = `s3://${frameSequence.bucket}/${PATH.join(frameSequence.prefix, perFrameAnnotation.frame)}`;
+    while (seqLabel['detection-annotations'].length) {
+      const perFrameAnnotation = seqLabel['detection-annotations'].shift();
+      /* look up the actual source file */
+      const frameNo = Number.parseInt(perFrameAnnotation['frame-no'], 10);
+      const frame = frameSequence.frames.find(x =>
+        x['frame-no'] === frameNo);
+      const sourceRef = `s3://${frameSequence.bucket}/${PATH.join(frameSequence.prefix, frame.frame)}`;
       let actualW;
       let actualH;
       if (!width || !height) {
@@ -84,7 +88,7 @@ class BoundingBoxAnnotations extends BaseAnnotations {
         ] = await this.readImageWxH(
           canvasLib,
           frameSequence.bucket,
-          PATH.join(frameSequence.prefix, perFrameAnnotation.frame)
+          PATH.join(frameSequence.prefix, frame.frame)
         );
       } else {
         actualW = width;
@@ -146,12 +150,24 @@ class BoundingBoxAnnotations extends BaseAnnotations {
   }
 
   async readImageWxH(canvasLib, bucket, key) {
-    const url = S3Utils.signUrl(bucket, key);
-    const img = await canvasLib.loadImage(url);
-    return [
-      img.width,
-      img.height,
-    ];
+    const buf = await S3Utils.getObject(bucket, key)
+      .then(data => data.Body)
+      .catch((e) => {
+        console.log(`ERR: readImageWxH: ${key}`);
+        throw e;
+      });
+    return new Promise((resolve, reject) => {
+      const img = new canvasLib.Image();
+      img.onload = () => resolve([
+        img.width,
+        img.height,
+      ]);
+      img.onerror = (e) => {
+        console.log(`readImageWxH(${key}): ${e.message}`);
+        reject(e);
+      };
+      img.src = buf;
+    });
   }
 }
 

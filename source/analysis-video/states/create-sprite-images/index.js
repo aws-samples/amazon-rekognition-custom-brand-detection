@@ -55,8 +55,7 @@ class StateCreateSpriteImages extends BaseState {
       for (let colIdx = 0; colIdx < splices.length; colIdx++) {
         const frame = splices[colIdx];
         const key = PATH.join(prefix, `${frame.coded_picture_number}.jpg`);
-        const url = S3Utils.signUrl(src.bucket, key);
-        const img = await canvasLib.loadImage(url);
+        const img = await this.readImage(canvasLib, src.bucket, key);
         context.drawImage(img,
           0, 0, img.width, img.height,
           (colIdx * spriteW), (rowIdx * spriteH), spriteW, spriteH);
@@ -97,6 +96,20 @@ class StateCreateSpriteImages extends BaseState {
       canvas,
       canvas.getContext('2d'),
     ];
+  }
+
+  async readImage(canvasLib, bucket, key) {
+    const buf = await S3Utils.getObject(bucket, key)
+      .then(data => data.Body);
+    return new Promise((resolve, reject) => {
+      const img = new canvasLib.Image();
+      img.onload = () => resolve(img);
+      img.onerror = (e) => {
+        console.log(`readImage(${key}): ${e.message}`);
+        reject(e);
+      };
+      img.src = buf;
+    });
   }
 }
 

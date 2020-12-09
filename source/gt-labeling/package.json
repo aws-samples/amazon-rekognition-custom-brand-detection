@@ -17,8 +17,8 @@
   "author": "aws-specialist-sa-emea",
   "license": "MIT-0",
   "devDependencies": {
+    "canvas": "^2.6.1",
     "core-lib": "file:../layers/core-lib",
-    "ffmpeg": "file:../layers/ffmpeg",
-    "canvas": "file:../layers/canvas"
+    "ffmpeg": "file:../layers/ffmpeg"
   }
 }

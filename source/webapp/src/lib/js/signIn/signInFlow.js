@@ -101,7 +101,10 @@ export default class SignInFlow {
     this.dialog.off('hidden.bs.modal').on('hidden.bs.modal', () =>
       this.view.trigger(SignInFlow.Events.View.Hidden));
 
-    this.dialog.modal({
+    if (user) {
+      return this.view.trigger(SignInFlow.Events.View.Hidden);
+    }
+    return this.dialog.modal({
       backdrop: 'static',
       keyboard: false,
       show: true,
