@@ -103,16 +103,16 @@ ___
 
 # Launching solution with Pre-built AWS CloudFormation Template
 
-**Version: 1.1.0**
+**Version: 1.2.0**
 
 The solution is deployed using an AWS CloudFormation template with AWS Lambda backed custom resources. To deploy the solution, use one of the following CloudFormation templates and follows the instructions.
 
 | AWS Region | AWS CloudFormation Template URL |
 |:-----------|:----------------------------|
-| EU (Ireland) |<a href="https://console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/new?stackName=custom-brand-detection&templateURL=https://ml-specialist-sa-demo-eu-west-1.s3-eu-west-1.amazonaws.com/custom-brand-detection/1.1.0/amazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
-| US East (N. Virginia) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=custom-brand-detection&templateURL=https://ml-specialist-sa-demo-us-east-1.s3.amazonaws.com/custom-brand-detection/1.1.0/amazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
-| US East (Ohio) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/new?stackName=custom-brand-detection&templateURL=https://ml-specialist-sa-demo-us-east-2.s3.us-east-2.amazonaws.com/custom-brand-detection/1.1.0/amazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
-| US West (Oregon) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/new?stackName=custom-brand-detection&templateURL=https://ml-specialist-sa-demo-us-west-2.s3-us-west-2.amazonaws.com/custom-brand-detection/1.1.0/amazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
+| EU (Ireland) |<a href="https://console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/new?stackName=custom-brand-detection&templateURL=https://ml-specialist-sa-demo-eu-west-1.s3-eu-west-1.amazonaws.com/custom-brand-detection/1.2.0/amazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
+| US East (N. Virginia) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=custom-brand-detection&templateURL=https://ml-specialist-sa-demo-us-east-1.s3.amazonaws.com/custom-brand-detection/1.2.0/amazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
+| US East (Ohio) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/new?stackName=custom-brand-detection&templateURL=https://ml-specialist-sa-demo-us-east-2.s3.us-east-2.amazonaws.com/custom-brand-detection/1.2.0/amazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
+| US West (Oregon) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/new?stackName=custom-brand-detection&templateURL=https://ml-specialist-sa-demo-us-west-2.s3-us-west-2.amazonaws.com/custom-brand-detection/1.2.0/amazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
 
 
 * Under **Create stack** page, click **Next** to continue
@@ -207,7 +207,7 @@ Now you should have all the code packages and CFN templates uploaded to your S3 
 
 Log in to [AWS S3 Console](https://s3.console.aws.amazon.com/s3/home) and navigate to the bucket you created.
 
-Make sure you see the following files under **/custom-brand-detection/1.1.0/**
+Make sure you see the following files under **/custom-brand-detection/1.2.0/**
 
 | Name | Description |
 |:---  |:------------|
@@ -275,7 +275,7 @@ This section covers two different methods to deploy your customized solution: 1)
 ```shell
 aws cloudformation create-stack \
 --stack-name custom-brand-detection \
---template-url https://your-bucket.s3.amazonaws.com/custom-brand-detection/1.1.0/amazon-rekognition-custom-brand-detection.template  \
+--template-url https://your-bucket.s3.amazonaws.com/custom-brand-detection/1.2.0/amazon-rekognition-custom-brand-detection.template  \
 --parameters file://cfn-input.json \
 --capabilities "CAPABILITY_IAM"
 

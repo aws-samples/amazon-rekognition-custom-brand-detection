@@ -4,7 +4,6 @@
   "description": "(Custom Brand Detection) image analysis state machine",
   "main": "index.js",
   "private": true,
-  "dependencies": {},
   "scripts": {
     "pretest": "npm install",
     "test": "mocha *.spec.js",

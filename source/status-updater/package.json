@@ -4,7 +4,6 @@
   "description": "(Custom Brand Detection) Amazon CloudWatch Event Status Updater",
   "main": "index.js",
   "private": true,
-  "dependencies": {},
   "scripts": {
     "pretest": "npm install",
     "test": "mocha *.spec.js",

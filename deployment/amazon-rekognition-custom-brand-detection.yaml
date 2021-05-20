@@ -334,28 +334,51 @@ Resources:
                                     - "sagemaker:CreateWorkteam"
                                     - "sagemaker:DescribeWorkteam"
                                     - "sagemaker:DeleteWorkteam"
-                                Resource: !Sub [
-                                    "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:workteam/${x0}-${x1}-*", {
-                                        x0: !FindInMap [
-                                            "Solution",
-                                            "Project",
-                                            "LowerCaseId"
-                                        ],
-                                        x1: !Select [
-                                            4,
-                                            !Split [
-                                                "-",
-                                                !Select [
-                                                    2,
-                                                    !Split [
-                                                        "/",
-                                                        !Sub "${AWS::StackId}"
+                                Resource:
+                                    - !Sub [
+                                        "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:workteam/private-crowd/${x0}-${x1}-*", {
+                                            x0: !FindInMap [
+                                                "Solution",
+                                                "Project",
+                                                "LowerCaseId"
+                                            ],
+                                            x1: !Select [
+                                                4,
+                                                !Split [
+                                                    "-",
+                                                    !Select [
+                                                        2,
+                                                        !Split [
+                                                            "/",
+                                                            !Sub "${AWS::StackId}"
+                                                        ]
                                                     ]
                                                 ]
                                             ]
-                                        ]
-                                    }
-                                ]
+                                        }
+                                    ]
+                                    - !Sub [
+                                        "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:workteam/${x0}-${x1}-*", {
+                                            x0: !FindInMap [
+                                                "Solution",
+                                                "Project",
+                                                "LowerCaseId"
+                                            ],
+                                            x1: !Select [
+                                                4,
+                                                !Split [
+                                                    "-",
+                                                    !Select [
+                                                        2,
+                                                        !Split [
+                                                            "/",
+                                                            !Sub "${AWS::StackId}"
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        }
+                                    ]
                             ## IAM - required by AdminCreateUser
                             -
                                 Effect: "Allow"

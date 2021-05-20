@@ -213,7 +213,8 @@ function build_custom_resources_package() {
   npm run build
   # explicitly package core-lib into custom resource package
   pushd dist
-  npm install --production --no-save "$LOCAL_PKG_CORE_LIB"
+  echo "=== Merging LOCAL_PKG_CORE_LIB = ${LOCAL_PKG_CORE_LIB} ===="
+  npm install --no-save "$LOCAL_PKG_CORE_LIB"
   popd
   #
   npm run zip -- "$PKG_CUSTOM_RESOURCES" .

@@ -82,7 +82,7 @@ class FFmpegHelper {
     }
     response = JSON.parse(response.stdout.toString());
     // only care keyframe
-    response.frames = response.frames.filter(x => x.pict_type === 'I');
+    response.frames = response.frames.filter(x => x.pict_type === 'I' || x.pict_type === 'P');
     return response;
   }
 

@@ -5,7 +5,6 @@
   "main": "index.js",
   "private": true,
   "license": "LGPL-2.1",
-  "dependencies": {},
   "scripts": {
     "pretest": "npm install",
     "test": "wrapper of ffmpeg binaries. skip unit test...",
