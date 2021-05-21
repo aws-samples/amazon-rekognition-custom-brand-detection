@@ -234,7 +234,7 @@ Resources:
                             -
                                 Effect: "Allow"
                                 Action: "sagemaker:DescribeWorkteam"
-                                Resource: !Sub "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:workteam/${GTWorkforceTeamName}"
+                                Resource: !Sub "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:workteam/private-crowd/${GTWorkforceTeamName}"
                             ## Cognito
                             -
                                 Effect: "Allow"
