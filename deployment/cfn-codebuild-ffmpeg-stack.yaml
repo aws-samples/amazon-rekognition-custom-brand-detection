@@ -17,7 +17,7 @@ Mappings:
             FFmpegCodeBuild: "%PKG_CODEBUILD_FFMPEG%"
     Node:
         Runtime:
-            Version: nodejs10.x
+            Version: nodejs14.x
     CodeBuild:
         Image:
             Name: aws/codebuild/amazonlinux2-x86_64-standard:3.0

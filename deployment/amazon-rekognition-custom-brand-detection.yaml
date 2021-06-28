@@ -55,7 +55,7 @@ Mappings:
             DisplayName: LabelingGT
     Node:
         Runtime:
-            Version: nodejs10.x
+            Version: nodejs14.x
 
 Parameters:
     AgreeFFmpegUse:
@@ -750,7 +750,7 @@ Resources:
                 }
             ]
             CompatibleRuntimes:
-                - nodejs10.x
+                - nodejs14.x
                 - nodejs12.x
             Content:
                 S3Bucket: !Sub [
@@ -818,7 +818,7 @@ Resources:
                 }
             ]
             CompatibleRuntimes:
-                - nodejs10.x
+                - nodejs14.x
                 - nodejs12.x
             Content:
                 S3Bucket: !Sub [
@@ -886,7 +886,7 @@ Resources:
                 }
             ]
             CompatibleRuntimes:
-                - nodejs10.x
+                - nodejs14.x
                 - nodejs12.x
             Content:
                 S3Bucket: !GetAtt CodeBuildFFmpegStack.Outputs.FFmpegLayerBucket
@@ -928,7 +928,7 @@ Resources:
                 }
             ]
             CompatibleRuntimes:
-                - nodejs10.x
+                - nodejs14.x
                 - nodejs12.x
             Content:
                 S3Bucket: !Sub [
