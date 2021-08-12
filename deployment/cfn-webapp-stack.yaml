@@ -859,21 +859,23 @@ Resources:
             ServiceToken: !Ref CustomResourceLambdaArn
             Data:
                 Bucket: !Ref WebBucket
-                AllowedOrigins:
-                    - !Sub "https://${CloudFrontDistribution.DomainName}"
-                AllowedMethods:
-                    - HEAD
-                    - GET
-                    - PUT
-                    - POST
-                    - DELETE
-                AllowedHeaders:
-                    - "*"
-                ExposeHeaders:
-                    - Content-Length
-                    - ETag
-                MaxAgeSeconds: 3000
-
+                CORSConfiguration:
+                    CORSRules:
+                        -
+                            AllowedOrigins:
+                                - !Sub "https://${CloudFrontDistribution.DomainName}"
+                            AllowedMethods:
+                                - HEAD
+                                - GET
+                                - PUT
+                                - POST
+                                - DELETE
+                            AllowedHeaders:
+                                - "*"
+                            ExposeHeaders:
+                                - Content-Length
+                                - ETag
+                            MaxAgeSeconds: 3000
 
     ################################################################################
     #
