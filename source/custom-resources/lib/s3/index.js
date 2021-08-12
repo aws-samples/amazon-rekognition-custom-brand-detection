@@ -16,11 +16,7 @@ exports.PostUpdateBucketCORS = async (event, context) => {
     const data = event.ResourceProperties.Data;
     const missing = [
       'Bucket',
-      'AllowedOrigins',
-      'AllowedMethods',
-      'AllowedHeaders',
-      'ExposeHeaders',
-      'MaxAgeSeconds',
+      'CORSConfiguration',
     ].filter(x => data[x] === undefined);
     if (missing.length) {
       throw new Error(`missing ${missing.join(', ')}`);
@@ -34,17 +30,7 @@ exports.PostUpdateBucketCORS = async (event, context) => {
     });
     await s3.putBucketCors({
       Bucket: data.Bucket,
-      CORSConfiguration: {
-        CORSRules: [
-          {
-            AllowedOrigins: data.AllowedOrigins,
-            AllowedMethods: data.AllowedMethods,
-            AllowedHeaders: data.AllowedHeaders,
-            ExposeHeaders: data.ExposeHeaders,
-            MaxAgeSeconds: Number.parseInt(data.MaxAgeSeconds, 10),
-          },
-        ],
-      },
+      CORSConfiguration: data.CORSConfiguration,
     }).promise();
     x0.storeResponseData('Status', 'SUCCESS');
     return x0.responseData;

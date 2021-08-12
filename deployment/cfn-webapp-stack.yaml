@@ -24,7 +24,7 @@ Mappings:
             Name: "api"
     Node:
         Runtime:
-            Version: nodejs10.x
+            Version: nodejs14.x
 
 Parameters:
     RootStackId:

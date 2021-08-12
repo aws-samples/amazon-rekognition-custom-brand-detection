@@ -109,10 +109,10 @@ The solution is deployed using an AWS CloudFormation template with AWS Lambda ba
 
 | AWS Region | AWS CloudFormation Template URL |
 |:-----------|:----------------------------|
-| EU (Ireland) |<a href="https://console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/new?stackName=custom-brand-detection&templateURL=https://ml-specialist-sa-demo-eu-west-1.s3-eu-west-1.amazonaws.com/custom-brand-detection/1.2.0/amazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
-| US East (N. Virginia) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=custom-brand-detection&templateURL=https://ml-specialist-sa-demo-us-east-1.s3.amazonaws.com/custom-brand-detection/1.2.0/amazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
-| US East (Ohio) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/new?stackName=custom-brand-detection&templateURL=https://ml-specialist-sa-demo-us-east-2.s3.us-east-2.amazonaws.com/custom-brand-detection/1.2.0/amazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
-| US West (Oregon) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/new?stackName=custom-brand-detection&templateURL=https://ml-specialist-sa-demo-us-west-2.s3-us-west-2.amazonaws.com/custom-brand-detection/1.2.0/amazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
+| EU (Ireland) |<a href="https://console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/new?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-eu-west-1.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
+| US East (N. Virginia) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-us-east-1.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
+| US East (Ohio) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/new?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-us-east-2.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
+| US West (Oregon) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/new?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-us-west-2.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
 
 
 * Under **Create stack** page, click **Next** to continue
@@ -140,11 +140,11 @@ ___
 # Building and customizing the solution
 
 ## Build Environment
-The sample code is written in NodeJS v10.x. Before you start, please make sure NodeJS has been installed. You would also need to create an Amazon Simple Storage Service (Amazon S3) bucket to store the build artifacts. 
+The sample code is written in NodeJS v14.x. Before you start, please make sure NodeJS has been installed. You would also need to create an Amazon Simple Storage Service (Amazon S3) bucket to store the build artifacts. 
 
 
 ### NodeJS
-Make sure you install NodeJS 10.x or above onto your system.
+Make sure you install NodeJS 14.x or above onto your system.
 
 For MAC user, download and install from [nodejs.org](https://nodejs.org/en/download/). Alternatively, you can also use Homebrew.
 
@@ -177,7 +177,7 @@ __
 * Clone the repository
 
 ```shell
-git clone git@github.com:awslabs/amazon-rekognition-custom-brand-detection.git
+git clone git@github.com:aws-samples/amazon-rekognition-custom-brand-detection.git
 
 ```
 
@@ -275,7 +275,7 @@ This section covers two different methods to deploy your customized solution: 1)
 ```shell
 aws cloudformation create-stack \
 --stack-name custom-brand-detection \
---template-url https://your-bucket.s3.amazonaws.com/custom-brand-detection/1.2.0/amazon-rekognition-custom-brand-detection.template  \
+--template-url https://your-bucket.s3.amazonaws.com/custom-brand-detection/latest/amazon-rekognition-custom-brand-detection.template  \
 --parameters file://cfn-input.json \
 --capabilities "CAPABILITY_IAM"
 

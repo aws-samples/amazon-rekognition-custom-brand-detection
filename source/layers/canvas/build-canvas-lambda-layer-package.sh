@@ -19,10 +19,12 @@ PUBLISH_PACKAGE=0
 
 #
 # Node configuration
-# (Default to build nodejs12.x package)
+# (Default to build nodejs14.x package)
 #
-VER_NODE=12.13.0
-VER_NODE_MODULE=72
+VER_NODE=14.15.5
+VER_NODE_MODULE=83
+#VER_NODE=12.13.0
+#VER_NODE_MODULE=72
 #VER_NODE=10.16.3
 #VER_NODE_MODULE=64
 

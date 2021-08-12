@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
-Description: Amazon Rekognition Custom Brand Detection - demonstrates how to use Amazon SageMaker Ground Truth and Amazon Rekognition Custom Labels to prepare and train a machine learning model to detection custom brand(s).
+Description: Amazon Rekognition Custom Brand Detection - demonstrates how to use Amazon SageMaker Ground Truth and Amazon Rekognition Custom Labels to prepare and train a machine learning model to detection custom brand. (uksb-1s3reu79u) (version:%VERSION%)
 
 Mappings:
     Solution:
@@ -55,7 +55,7 @@ Mappings:
             DisplayName: LabelingGT
     Node:
         Runtime:
-            Version: nodejs10.x
+            Version: nodejs14.x
 
 Parameters:
     AgreeFFmpegUse:
@@ -750,8 +750,7 @@ Resources:
                 }
             ]
             CompatibleRuntimes:
-                - nodejs10.x
-                - nodejs12.x
+                - nodejs14.x
             Content:
                 S3Bucket: !Sub [
                     "${x0}${x1}", {
@@ -818,8 +817,7 @@ Resources:
                 }
             ]
             CompatibleRuntimes:
-                - nodejs10.x
-                - nodejs12.x
+                - nodejs14.x
             Content:
                 S3Bucket: !Sub [
                     "${x0}${x1}", {
@@ -886,8 +884,7 @@ Resources:
                 }
             ]
             CompatibleRuntimes:
-                - nodejs10.x
-                - nodejs12.x
+                - nodejs14.x
             Content:
                 S3Bucket: !GetAtt CodeBuildFFmpegStack.Outputs.FFmpegLayerBucket
                 S3Key: !GetAtt CodeBuildFFmpegStack.Outputs.FFmpegLayerKey
@@ -928,8 +925,7 @@ Resources:
                 }
             ]
             CompatibleRuntimes:
-                - nodejs10.x
-                - nodejs12.x
+                - nodejs14.x
             Content:
                 S3Bucket: !Sub [
                     "${x0}${x1}", {
@@ -4369,21 +4365,34 @@ Resources:
             ServiceToken: !GetAtt CustomResourceLambda.Arn
             Data:
                 Bucket: !Ref SourceBucket
-                AllowedOrigins:
-                    - !GetAtt WebAppStack.Outputs.WebsiteUrl
-                    - "https://mturk-console-template-preview-hooks.s3.amazonaws.com"
-                    - "https://s3.amazonaws.com"
-                AllowedMethods:
-                    - HEAD
-                    - GET
-                    - PUT
-                    - POST
-                AllowedHeaders:
-                    - "*"
-                ExposeHeaders:
-                    - Content-Length
-                    - ETag
-                MaxAgeSeconds: 3000
+                CORSConfiguration:
+                    CORSRules:
+                        -
+                            AllowedHeaders:
+                                - "*"
+                            AllowedOrigins:
+                                - !GetAtt WebAppStack.Outputs.WebsiteUrl
+                                - "https://mturk-console-template-preview-hooks.s3.amazonaws.com"
+                                - "https://s3.amazonaws.com"
+                            AllowedMethods:
+                                - PUT
+                                - POST
+                            ExposeHeaders:
+                                - Content-Length
+                                - ETag
+                            MaxAgeSeconds: 3000
+                        # SageMaker Ground Truth Labeling Job
+                        -
+                            AllowedHeaders:
+                                - "*"
+                            AllowedOrigins:
+                                - "*"
+                            AllowedMethods:
+                                - HEAD
+                                - GET
+                            ExposeHeaders:
+                                - Access-Control-Allow-Origin
+                            MaxAgeSeconds: 3000
 
     # Custom::PostCreateSolutionManifest returns
     #   * Status
