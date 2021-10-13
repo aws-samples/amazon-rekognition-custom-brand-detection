@@ -526,11 +526,13 @@ Resources:
                     -
                         Effect: Deny
                         Principal: "*"
-                        Action: "*"
-                        Resource: !Sub "arn:aws:s3:::${LogsBucket}/*"
+                        Action: "s3:*"
+                        Resource:
+                            - !Sub "arn:aws:s3:::${LogsBucket}"
+                            - !Sub "arn:aws:s3:::${LogsBucket}/*"
                         Condition:
                             Bool:
-                                "aws:SecureTransport": false
+                                aws:SecureTransport: false
 
     SourceBucket:
         DependsOn: ShouldUseFFmpeg
@@ -624,11 +626,13 @@ Resources:
                     -
                         Effect: Deny
                         Principal: "*"
-                        Action: "*"
-                        Resource: !Sub "arn:aws:s3:::${SourceBucket}/*"
+                        Action: "s3:*"
+                        Resource:
+                            - !Sub "arn:aws:s3:::${SourceBucket}"
+                            - !Sub "arn:aws:s3:::${SourceBucket}/*"
                         Condition:
                             Bool:
-                                "aws:SecureTransport": false
+                                aws:SecureTransport: false
                     # Amazon Rekognition Custom Labels specific
                     -
                         Effect: Allow
