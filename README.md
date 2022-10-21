@@ -109,10 +109,10 @@ The solution is deployed using an AWS CloudFormation template with AWS Lambda ba
 
 | AWS Region | AWS CloudFormation Template URL |
 |:-----------|:----------------------------|
-| EU (Ireland) |<a href="https://console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/new?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-eu-west-1.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
-| US East (N. Virginia) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-us-east-1.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
-| US East (Ohio) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/new?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-us-east-2.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
-| US West (Oregon) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/new?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-us-west-2.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
+| EU (Ireland) |<a href="https://console.aws.amazon.com/cloudformation/home?region=eu-west-1#stacks/create/review?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-eu-west-1.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
+| US East (N. Virginia) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#stacks/create/review?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-us-east-1.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
+| US East (Ohio) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-2#stacks/create/review?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-us-east-2.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
+| US West (Oregon) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-west-2#stacks/create/review?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-us-west-2.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
 
 
 * Under **Create stack** page, click **Next** to continue
