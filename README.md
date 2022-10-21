@@ -103,7 +103,7 @@ ___
 
 # Launching solution with Pre-built AWS CloudFormation Template
 
-**Version: 1.2.0**
+**Version: 1.3.1**
 
 The solution is deployed using an AWS CloudFormation template with AWS Lambda backed custom resources. To deploy the solution, use one of the following CloudFormation templates and follows the instructions.
 
@@ -142,6 +142,7 @@ ___
 ## Build Environment
 The sample code is written in NodeJS v14.x. Before you start, please make sure NodeJS has been installed. You would also need to create an Amazon Simple Storage Service (Amazon S3) bucket to store the build artifacts. 
 
+_
 
 ### NodeJS
 Make sure you install NodeJS 14.x or above onto your system.
@@ -152,6 +153,7 @@ For Linux or Amazon EC2 user, follow [Tutorial: Setting Up Node.js on an Amazon 
 
 For Windows 10 user, make sure to install [Windows Subsystem for Linux](https://docs.microsoft.com/en-us/windows/wsl/install-win10) before installing NodeJS. The build and deploy scripts are written in Bash script.
 
+_
 
 ### AWS CLI
 
@@ -163,6 +165,12 @@ The **deploy-s3-dist.sh** shell script uploads the build artifacts to your S3 bu
 aws configure
 
 ```
+
+### JQ
+
+[jq](https://stedolan.github.io/jq/) is a lightweight and flexible command-line JSON processor. The **deploy-s3-dist.sh** uses it to parse the JSON output. Make sure to download and install `jq`.
+
+_
 
 ### Amazon S3 Bucket
 

@@ -728,13 +728,11 @@ Resources:
                     -
                         Effect: Deny
                         Principal: "*"
-                        Action: "s3:*"
-                        Resource:
-                            - !Sub "arn:aws:s3:::${WebBucket}"
-                            - !Sub "arn:aws:s3:::${WebBucket}/*"
+                        Action: "*"
+                        Resource: !Sub "arn:aws:s3:::${WebBucket}/*"
                         Condition:
                             Bool:
-                                aws:SecureTransport: false
+                                "aws:SecureTransport": false
                     -
                         Effect: Allow
                         Action: "s3:GetObject"

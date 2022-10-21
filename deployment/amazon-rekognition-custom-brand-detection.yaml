@@ -326,6 +326,10 @@ Resources:
                             ## SageMaker
                             -
                                 Effect: "Allow"
+                                Action: "sagemaker:AddTags"
+                                Resource: !Sub arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:*/*
+                            -
+                                Effect: "Allow"
                                 Action: "sagemaker:ListWorkteams"
                                 Resource: !Join ["", ["*"]]
                             -
@@ -526,13 +530,11 @@ Resources:
                     -
                         Effect: Deny
                         Principal: "*"
-                        Action: "s3:*"
-                        Resource:
-                            - !Sub "arn:aws:s3:::${LogsBucket}"
-                            - !Sub "arn:aws:s3:::${LogsBucket}/*"
+                        Action: "*"
+                        Resource: !Sub "arn:aws:s3:::${LogsBucket}/*"
                         Condition:
                             Bool:
-                                aws:SecureTransport: false
+                                "aws:SecureTransport": false
 
     SourceBucket:
         DependsOn: ShouldUseFFmpeg
@@ -626,13 +628,11 @@ Resources:
                     -
                         Effect: Deny
                         Principal: "*"
-                        Action: "s3:*"
-                        Resource:
-                            - !Sub "arn:aws:s3:::${SourceBucket}"
-                            - !Sub "arn:aws:s3:::${SourceBucket}/*"
+                        Action: "*"
+                        Resource: !Sub "arn:aws:s3:::${SourceBucket}/*"
                         Condition:
                             Bool:
-                                aws:SecureTransport: false
+                                "aws:SecureTransport": false
                     # Amazon Rekognition Custom Labels specific
                     -
                         Effect: Allow
@@ -2403,6 +2403,10 @@ Resources:
                                     - "logs:PutLogEvents"
                                 Resource: !GetAtt GTLabelingJobLogGroup.Arn
                             ## SageMaker Ground Truth
+                            -
+                                Effect: "Allow"
+                                Action: "sagemaker:AddTags"
+                                Resource: !Sub arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:*/*
                             -
                                 Effect: "Allow"
                                 Action: "sagemaker:DescribeLabelingJob"

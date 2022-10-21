@@ -6,7 +6,7 @@
   "private": true,
   "dependencies": {
     "glob": "^7.1.6",
-    "terser": "^4.7.0"
+    "terser": "^4.8.1"
   },
   "scripts": {},
   "author": "aws-specialist-sa-emea",

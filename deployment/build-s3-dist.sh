@@ -383,7 +383,6 @@ function build_webapp_dependencies() {
     "crypto-js-bundle" \
     "fontawesome-bundle" \
     "jquery-bundle" \
-    "popper-bundle" \
     "videojs-bundle" \
     "videojs-markers-bundle" \
     "chartjs-bundle" \

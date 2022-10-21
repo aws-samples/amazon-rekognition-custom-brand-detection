@@ -59,6 +59,7 @@ class FFmpegHelper {
     const options = {
       cwd: undefined,
       env: this.env,
+      maxBuffer: 20 * 1024 * 1024,
     };
     const params = [
       '-threads',
@@ -96,6 +97,7 @@ class FFmpegHelper {
     const options = {
       cwd: undefined,
       env: this.env,
+      maxBuffer: 20 * 1024 * 1024,
     };
     const common = [
       '-threads',
@@ -152,6 +154,7 @@ class FFmpegHelper {
     const options = {
       cwd: undefined,
       env: this.env,
+      maxBuffer: 20 * 1024 * 1024,
     };
     const params = [
       '-threads',

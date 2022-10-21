@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2021-1021
+### Changed
+- remove popper dependency
+- createWorkteam requires sagemaker:AddTags permission to tag the team
+- extract atmost 1200 frames per video and evenly distribute the frame across the entire video
+- add JQ prerequisite to README file
+
 ## [1.3.0] - 2021-0812
 ### Changed
 - updated Lambda runtime and layers to NodeJS 14.x

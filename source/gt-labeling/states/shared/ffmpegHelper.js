@@ -8,6 +8,7 @@ const {
 } = require('core-lib');
 
 const FRAMES_PER_SLICE = 600;
+const MAX_FRAMES_PER_VIDEO = 1200;
 
 class FFmpegHelper {
   constructor() {
@@ -58,6 +59,7 @@ class FFmpegHelper {
     const options = {
       cwd: undefined,
       env: this.env,
+      maxBuffer: 20 * 1024 * 1024,
     };
     const params = [
       '-threads',
@@ -83,6 +85,15 @@ class FFmpegHelper {
     response = JSON.parse(response.stdout.toString());
     // only care keyframe
     response.frames = response.frames.filter(x => x.pict_type === 'I' || x.pict_type === 'P');
+    if (response.frames.length <= MAX_FRAMES_PER_VIDEO) {
+      return response;
+    }
+    const slices = [];
+    const step = Math.round(response.frames.length / MAX_FRAMES_PER_VIDEO);
+    for (let i = 0; i < response.frames.length; i += step) {
+      slices.push(response.frames[i]);
+    }
+    response.frames = slices;
     return response;
   }
 
@@ -92,6 +103,7 @@ class FFmpegHelper {
     const options = {
       cwd: undefined,
       env: this.env,
+      maxBuffer: 20 * 1024 * 1024,
     };
     const common = [
       '-threads',
@@ -148,6 +160,7 @@ class FFmpegHelper {
     const options = {
       cwd: undefined,
       env: this.env,
+      maxBuffer: 20 * 1024 * 1024,
     };
     const params = [
       '-threads',
