@@ -220,9 +220,16 @@ class DB {
       apiVersion: '2012-08-10',
     });
 
-    const response = await instance.describeTable({
-      TableName: this.table,
-    }).promise();
+    let response;
+
+    try {
+      response = await instance.describeTable({
+        TableName: this.table,
+      }).promise();
+    } catch (e) {
+      console.error(e);
+      throw e;
+    }
 
     const {
       Table: {

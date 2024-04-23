@@ -24,7 +24,7 @@ Mappings:
             Name: "api"
     Node:
         Runtime:
-            Version: nodejs14.x
+            Version: nodejs20.x
 
 Parameters:
     RootStackId:
@@ -142,6 +142,12 @@ Resources:
     ################################################################################
     ApiLambdaLogGroup:
         Type: AWS::Logs::LogGroup
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W84
+                        reason: Use default encryption. Disable additional KMS encryption requirement. https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/encrypt-log-data-kms.html
         Properties:
             LogGroupName: !Sub [
                 "/aws/lambda/${x0}-${RootStackId}-${x1}", {
@@ -272,6 +278,15 @@ Resources:
 
     ApiLambda:
         Type: AWS::Lambda::Function
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W89
+                        reason: Workflow not using VPC
+                    -
+                        id: W92
+                        reason: Workflow not limiting simultaneous executions
         Properties:
             FunctionName: !Sub [
                 "${x0}-${RootStackId}-${x1}", {
@@ -662,7 +677,6 @@ Resources:
                     -
                       ServerSideEncryptionByDefault:
                           SSEAlgorithm: AES256
-            AccessControl: LogDeliveryWrite
             LoggingConfiguration:
                 DestinationBucketName: !Ref LogsBucket
                 LogFilePrefix: "access_logs_web_bucket/"
@@ -702,6 +716,11 @@ Resources:
                         NoncurrentVersionExpirationInDays: 7
                         AbortIncompleteMultipartUpload:
                             DaysAfterInitiation: 1
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: true
+                BlockPublicPolicy: true
+                IgnorePublicAcls: true
+                RestrictPublicBuckets: true
             Tags:
                 -
                     Key: SolutionId
@@ -728,8 +747,10 @@ Resources:
                     -
                         Effect: Deny
                         Principal: "*"
-                        Action: "*"
-                        Resource: !Sub "arn:aws:s3:::${WebBucket}/*"
+                        Action: "s3:*"
+                        Resource:
+                            - !GetAtt WebBucket.Arn
+                            - !Sub ${WebBucket.Arn}/*
                         Condition:
                             Bool:
                                 "aws:SecureTransport": false

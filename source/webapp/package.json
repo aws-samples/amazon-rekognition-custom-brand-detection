@@ -12,7 +12,7 @@
     "build": "npm-run-all -s build:clean build:copy",
     "zip": "cd dist && zip -rq"
   },
-  "author": "aws-specialist-sa-emea",
+  "author": "aws-megs-specialists",
   "license": "MIT-0",
   "devDependencies": {}
 }

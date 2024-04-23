@@ -228,6 +228,11 @@ function createAndDeployFFmpegPackage() {
   cp -av /lib64/libbz2.so* "$libDir"
   cp -av /lib64/libfreetype.so* "$libDir"
   cp -av /lib64/libpng*.so* "$libDir"
+  cp -av /lib64/libharfbuzz*.so* "$libDir"
+  cp -av /lib64/libbrotlidec*.so* "$libDir"
+  cp -av /lib64/libgraphite2*.so* "$libDir"
+  cp -av /lib64/libbrotlicommon*.so* "$libDir"
+  cp -av /lib64/libz*.so* "$libDir"
 
   # create zip package
   zip -r --symlinks "$outFile" .

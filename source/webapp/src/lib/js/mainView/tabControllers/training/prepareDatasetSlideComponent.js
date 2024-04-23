@@ -106,8 +106,11 @@ export default class PrepareDatasetSlideComponent extends mxReadable(mxDropzone(
 
   // override BaseSlideComponent
   saveData() {
-    const projectName = this.slide.find(`#${this.ids.projectName}`);
-    this.projectName = projectName.val() || `project-${(new Date()).toISOString().replace(/[:.-]/g, '')}`;
+    let projectName = this.slide.find(`#${this.ids.projectName}`).val();
+    if (!projectName) {
+      projectName = `project-${(new Date()).toISOString().replace(/[:.-]/g, '')}`;
+    }
+    this.projectName = projectName.toLowerCase();
 
     this.labelList.length = 0;
     const form = this.slide.find(`#${this.ids.labelsForm}`);

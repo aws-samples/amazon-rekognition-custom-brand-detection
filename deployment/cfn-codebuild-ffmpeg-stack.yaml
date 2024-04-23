@@ -17,10 +17,10 @@ Mappings:
             FFmpegCodeBuild: "%PKG_CODEBUILD_FFMPEG%"
     Node:
         Runtime:
-            Version: nodejs14.x
+            Version: nodejs20.x
     CodeBuild:
         Image:
-            Name: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+            Name: aws/codebuild/amazonlinux2-x86_64-standard:5.0
             Type: LINUX_CONTAINER
     FFmpeg:
         Release:
@@ -34,6 +34,9 @@ Parameters:
         Type: String
         Description: "stores source files"
         AllowedPattern: "[a-z][a-z0-9-_]*"
+    AwsSdkLayer:
+        Type: String
+        Description: AwsSdkLayer
 
 Metadata:
     AWS::CloudFormation::Interface:
@@ -167,7 +170,7 @@ Resources:
                             commands:
                                 - echo "== Nothing to do in Post build =="
             Environment:
-                ComputeType: BUILD_GENERAL1_MEDIUM
+                ComputeType: BUILD_GENERAL1_LARGE
                 Image: !FindInMap [
                     "CodeBuild",
                     "Image",
@@ -253,6 +256,15 @@ Resources:
 
     CustomResourcesCodeBuildLambda:
         Type: AWS::Lambda::Function
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W89
+                        reason: Workflow not using VPC
+                    -
+                        id: W92
+                        reason: Workflow not limiting simultaneous executions
         Properties:
             Description: !Sub [
                 "(${x0}) custom resources start build", {
@@ -301,6 +313,8 @@ Resources:
                         ]
                     }
                 ]
+            Layers:
+                - !Ref AwsSdkLayer
 
     StartBuild:
         Type: Custom::StartBuild

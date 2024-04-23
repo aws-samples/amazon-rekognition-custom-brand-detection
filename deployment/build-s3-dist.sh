@@ -72,6 +72,19 @@ TEMPLATE_DIST_DIR="$DEPLOY_DIR/global-s3-assets"
 BUILD_DIST_DIR="$DEPLOY_DIR/regional-s3-assets"
 TMP_DIR=$(mktemp -d)
 
+# make sure nodejs v20 is installed
+[[ ! "${NODEJS_VERSION}" =~ "v20" ]] && \
+  echo "error: Node JS Version must be v20" && \
+  exit 1
+
+[ "$(which jq)" == "" ] && \
+  echo "error: JQ command line tool is required" && \
+  exit 1
+
+[ "$(which aws)" == "" ] && \
+  echo "error: AWS CLI command line tool is required" && \
+  exit 1
+
 [ -z "$BUCKET" ] && \
   echo "error: missing --bucket parameter..." && \
   usage && \
@@ -91,10 +104,21 @@ TMP_DIR=$(mktemp -d)
 [ -z "$SINGLE_REGION" ] && \
   SINGLE_REGION=true
 
+# bucket account owner
+ACCOUNTID=$(aws sts get-caller-identity | jq .Account | tr -d \")
+[ -z "$ACCOUNTID" ] && \
+  echo "error: fail to get AWS Account ID" && \
+  exit 1
+
+# check to make sure the deployment bucket belongs to the same account
+[ "$(aws s3api get-bucket-location --bucket ${BUCKET} --expected-bucket-owner ${ACCOUNTID} | jq .LocationConstraint | tr -d \")" == "" ] && \
+  echo "error: deployment bucket, \"${BUCKET}\" doesn't belong to the same AWS Account" && \
+  exit 1
+
 ## Lambda layer package(s)
 LAYER_AWSSDK=
 LAYER_CORE_LIB=
-LAYER_CANVAS=
+LAYER_JIMP=
 
 # note: core-lib for custom resource
 LOCAL_PKG_CORE_LIB=
@@ -115,7 +139,6 @@ PKG_CODEBUILD_CUSTOM_RESOURCES=
 
 ## trap exit signal and make sure to remove the TMP_DIR
 trap "rm -rf $TMP_DIR" EXIT
-
 
 function clean_start() {
   echo "------------------------------------------------------------------------------"
@@ -139,21 +162,8 @@ function install_dev_dependencies() {
   echo "------------------------------------------------------------------------------"
   echo "Install node package dependencies"
   echo "------------------------------------------------------------------------------"
-  pushd "$SOURCE_DIR"
-  npm install -g \
-    aws-sdk \
-    aws-sdk-mock \
-    browserify \
-    chai \
-    eslint \
-    eslint-config-airbnb-base \
-    eslint-plugin-import \
-    mocha \
-    nock \
-    npm-run-all \
-    sinon \
-    sinon-chai \
-    uglify-es
+  pushd "$DEPLOY_DIR/.."
+  npm install --include=dev
   popd
 }
 
@@ -189,16 +199,17 @@ function build_core_lib_layer() {
   popd
 }
 
-function build_canvas_layer() {
+function build_jimp_layer() {
   echo "------------------------------------------------------------------------------"
-  echo "Building Canvas layer package"
+  echo "Building JIMP layer package"
   echo "------------------------------------------------------------------------------"
-  local package="canvas"
-  LAYER_CANVAS="${package}-${VERSION}.zip"
+  local package="jimp"
+  LAYER_JIMP="${package}-${VERSION}.zip"
   pushd "$SOURCE_DIR/layers/${package}"
+  npm install
   npm run build
-  npm run move -- "$LAYER_CANVAS"
-  cp -v "./dist/${LAYER_CANVAS}" "$BUILD_DIST_DIR"
+  npm run zip -- "$LAYER_JIMP" .
+  cp -v "./dist/${LAYER_JIMP}" "$BUILD_DIST_DIR"
   popd
 }
 
@@ -340,7 +351,7 @@ function minify_jscript() {
   echo "------------------------------------------------------------------------------"
   local file=$1
   pushd "$SOURCE_DIR/build"
-  npm install --production
+  npm install --omit=dev
   node post-build.js minify --dir "$file"
   [ $? -ne 0 ] && exit 1
   popd
@@ -352,7 +363,7 @@ function compute_jscript_integrity() {
   echo "------------------------------------------------------------------------------"
   local file=$1
   pushd "$SOURCE_DIR/build"
-  npm install --production
+  npm install --omit=dev
   node post-build.js inject-sri --html "$file"
   [ $? -ne 0 ] && exit 1
   popd
@@ -366,7 +377,7 @@ function build_thirdparty_bundle() {
   local bundle_dir="$SOURCE_DIR/webapp/third_party/$bundle"
 
   pushd "$bundle_dir"
-  npm install --production
+  npm install --omit=dev
   npm run build
   [ $? -ne 0 ] && exit 1
   popd
@@ -503,8 +514,8 @@ function build_cloudformation_templates() {
   echo "Updating %LAYER_CORE_LIB% param in cloudformation templates..."
   sed -i'.bak' -e "s|%LAYER_CORE_LIB%|${LAYER_CORE_LIB}|g" *.yaml || exit 1
 
-  echo "Updating %LAYER_CANVAS% param in cloudformation templates..."
-  sed -i'.bak' -e "s|%LAYER_CANVAS%|${LAYER_CANVAS}|g" *.yaml || exit 1
+  echo "Updating %LAYER_JIMP% param in cloudformation templates..."
+  sed -i'.bak' -e "s|%LAYER_JIMP%|${LAYER_JIMP}|g" *.yaml || exit 1
 
   # package(s)
   echo "Updating %PKG_CUSTOM_RESOURCES% param in cloudformation templates..."
@@ -558,7 +569,7 @@ function on_complete() {
   echo "S3 Packaging Complete. (${SOLUTION} ${VERSION})"
   echo "------------------------------------------------------------------------------"
   echo "** LAYER_AWSSDK=${LAYER_AWSSDK} **"
-  echo "** LAYER_CANVAS=${LAYER_CANVAS} **"
+  echo "** LAYER_JIMP=${LAYER_JIMP} **"
   echo "** LAYER_CORE_LIB=${LAYER_CORE_LIB} **"
   echo "** PKG_CUSTOM_RESOURCES=${PKG_CUSTOM_RESOURCES} **"
   echo "** PKG_GT_LABELING_STEP=${PKG_GT_LABELING_STEP} **"
@@ -578,7 +589,7 @@ clean_start
 install_dev_dependencies
 build_awssdk_layer
 build_core_lib_layer
-build_canvas_layer
+build_jimp_layer
 build_custom_resources_package
 build_api_package
 build_gt_labeling_step_package

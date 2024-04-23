@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 const PATH = require('path');
+const Jimp = require('jimp');
 const {
   States,
   S3Utils,
@@ -9,7 +10,6 @@ const BaseAnnotations = require('./baseAnnotations');
 
 class BoundingBoxAnnotations extends BaseAnnotations {
   async collectAnnotations() {
-    const canvasLib = require('canvas');
     const response = await this.describeLabelingJob();
     const labelingJobName = response.LabelingJobName;
     const attributeName = response.LabelAttributeName;
@@ -19,7 +19,7 @@ class BoundingBoxAnnotations extends BaseAnnotations {
 
     const labelingType = 'video-object-detection_BB';
     let annotations = await Promise.all(outputDataset.map(dataset =>
-      this.parseAnnotation(canvasLib, labelingType, attributeName, dataset)));
+      this.parseAnnotation(labelingType, attributeName, dataset)));
     annotations = annotations.reduce((a0, c0) => a0.concat(c0), []);
     // filter source-ref that is without annotations
     annotations = annotations.filter(x =>
@@ -42,7 +42,7 @@ class BoundingBoxAnnotations extends BaseAnnotations {
     };
   }
 
-  async parseAnnotation(canvasLib, labelingType, attributeName, dataset) {
+  async parseAnnotation(labelingType, attributeName, dataset) {
     // get frame's location
     let tmp = dataset['source-ref'].slice('s3://'.length).split('/');
     let bucket = tmp.shift();
@@ -86,7 +86,6 @@ class BoundingBoxAnnotations extends BaseAnnotations {
           actualW,
           actualH,
         ] = await this.readImageWxH(
-          canvasLib,
           frameSequence.bucket,
           PATH.join(frameSequence.prefix, frame.frame)
         );
@@ -149,24 +148,19 @@ class BoundingBoxAnnotations extends BaseAnnotations {
       ];
   }
 
-  async readImageWxH(canvasLib, bucket, key) {
-    const buf = await S3Utils.getObject(bucket, key)
-      .then(data => data.Body)
-      .catch((e) => {
-        console.log(`ERR: readImageWxH: ${key}`);
-        throw e;
-      });
+  async readImageWxH(bucket, key) {
     return new Promise((resolve, reject) => {
-      const img = new canvasLib.Image();
-      img.onload = () => resolve([
-        img.width,
-        img.height,
-      ]);
-      img.onerror = (e) => {
-        console.log(`readImageWxH(${key}): ${e.message}`);
-        reject(e);
-      };
-      img.src = buf;
+      const signed = S3Utils.signUrl(bucket, key);
+      Jimp.read(signed)
+        .then((image) => {
+          const imgW = image.getWidth();
+          const imgH = image.getHeight();
+          resolve([imgW, imgH]);
+        })
+        .catch((e) => {
+          console.log(`ERR: readImageWxH: ${key}`);
+          reject(e);
+        });
     });
   }
 }

@@ -54,6 +54,7 @@ class FFmpegHelper {
   }
 
   async ffprobe(bucket, key) {
+    // await this.dumpDependencies(`${FFMPEG.PATH}/ffprobe`);
     const url = S3Utils.signUrl(bucket, key);
 
     const options = {
@@ -98,6 +99,7 @@ class FFmpegHelper {
   }
 
   async ffmpeg(bucket, key, frames, outDir) {
+    // await this.dumpDependencies(`${FFMPEG.PATH}/ffmpeg`);
     const url = S3Utils.signUrl(bucket, key);
 
     const options = {
@@ -192,6 +194,21 @@ class FFmpegHelper {
       tmp,
     ]);
     return response.stdout.toString();
+  }
+
+  async dumpDependencies(command) {
+    const options = {
+      cwd: undefined,
+      env: this.env,
+      maxBuffer: 20 * 1024 * 1024,
+    };
+
+    const response = CHILD.spawnSync('ldd', [command], options);
+    if (response.status !== 0) {
+      console.log(response.stderr.toString());
+      throw new Error(response.error);
+    }
+    console.log(response.stdout.toString());
   }
 }
 

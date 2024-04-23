@@ -25,7 +25,7 @@ Mappings:
         Layer:
             AwsSdk: "%LAYER_AWSSDK%"
             CoreLib: "%LAYER_CORE_LIB%"
-            Canvas: "%LAYER_CANVAS%"
+            JimpLib: "%LAYER_JIMP%"
         Stack:
             WebApp: "cfn-webapp-stack.template"
             CodeBuildFFmpeg: "cfn-codebuild-ffmpeg-stack.template"
@@ -55,7 +55,7 @@ Mappings:
             DisplayName: LabelingGT
     Node:
         Runtime:
-            Version: nodejs14.x
+            Version: nodejs20.x
 
 Parameters:
     AgreeFFmpegUse:
@@ -399,6 +399,15 @@ Resources:
 
     CustomResourceLambda:
         Type: AWS::Lambda::Function
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W89
+                        reason: Workflow not using VPC
+                    -
+                        id: W92
+                        reason: Workflow not limiting simultaneous executions
         Properties:
             Description: !Sub [
                 "(${x0}) object detection custom resources", {
@@ -447,6 +456,8 @@ Resources:
                         ]
                     }
                 ]
+            Layers:
+                - !Ref AwsSdkLayer
 
     ShouldUseFFmpeg:
         Type: Custom::ShouldUseFFmpeg
@@ -500,7 +511,6 @@ Resources:
                     -
                       ServerSideEncryptionByDefault:
                           SSEAlgorithm: AES256
-            AccessControl: LogDeliveryWrite
             LifecycleConfiguration:
                 Rules:
                     -
@@ -519,7 +529,14 @@ Resources:
                         "LowerCaseId"
                     ]
             VersioningConfiguration:
-                Status: Enabled
+                Status: Suspended
+            # Note: Needed to enable ACL so that Amazon CloudFront
+            # can write logs to the bucket. Refer to
+            # https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/AccessLogs.html#access-logs-choosing-s3-bucket
+            AccessControl: LogDeliveryWrite
+            OwnershipControls:
+                Rules:
+                    - ObjectOwnership: BucketOwnerPreferred
 
     LogsBucketPolicy:
         Type: AWS::S3::BucketPolicy
@@ -530,11 +547,23 @@ Resources:
                     -
                         Effect: Deny
                         Principal: "*"
-                        Action: "*"
-                        Resource: !Sub "arn:aws:s3:::${LogsBucket}/*"
+                        Action: s3:*
+                        Resource:
+                            - !GetAtt LogsBucket.Arn
+                            - !Sub ${LogsBucket.Arn}/*
                         Condition:
                             Bool:
                                 "aws:SecureTransport": false
+                    -
+                        Sid: S3ServerAccessLogsPolicy
+                        Effect: Allow
+                        Principal:
+                            Service: logging.s3.amazonaws.com
+                        Action: s3:PutObject
+                        Resource: !Sub ${LogsBucket.Arn}/*
+                        Condition:
+                            StringEquals:
+                                aws:SourceAccount: !Ref AWS::AccountId
 
     SourceBucket:
         DependsOn: ShouldUseFFmpeg
@@ -571,7 +600,6 @@ Resources:
                           SSEAlgorithm: AES256
             AccelerateConfiguration:
                 AccelerationStatus: Enabled
-            AccessControl: LogDeliveryWrite
             LoggingConfiguration:
                 DestinationBucketName: !Ref LogsBucket
                 LogFilePrefix: "access_logs_source_bucket/"
@@ -616,6 +644,11 @@ Resources:
                         "Project",
                         "LowerCaseId"
                     ]
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: true
+                BlockPublicPolicy: true
+                IgnorePublicAcls: true
+                RestrictPublicBuckets: true
             VersioningConfiguration:
                 Status: Enabled
 
@@ -628,8 +661,10 @@ Resources:
                     -
                         Effect: Deny
                         Principal: "*"
-                        Action: "*"
-                        Resource: !Sub "arn:aws:s3:::${SourceBucket}/*"
+                        Action: s3:*
+                        Resource:
+                            - !GetAtt SourceBucket.Arn
+                            - !Sub ${SourceBucket.Arn}/*
                         Condition:
                             Bool:
                                 "aws:SecureTransport": false
@@ -717,7 +752,7 @@ Resources:
                     ]
                 ]
                 SourceBucket: !Ref SourceBucket
-
+                AwsSdkLayer: !Ref AwsSdkLayer
 
     ################################################################################
     #
@@ -725,7 +760,7 @@ Resources:
     # * AWS SDK
     # * Core Library
     # * FFmpeg
-    # * Canvas Library
+    # * Jimp Library
     #
     ################################################################################
     AwsSdkLayer:
@@ -754,7 +789,10 @@ Resources:
                 }
             ]
             CompatibleRuntimes:
-                - nodejs14.x
+                - !FindInMap
+                    - Node
+                    - Runtime
+                    - Version
             Content:
                 S3Bucket: !Sub [
                     "${x0}${x1}", {
@@ -821,7 +859,10 @@ Resources:
                 }
             ]
             CompatibleRuntimes:
-                - nodejs14.x
+                - !FindInMap
+                    - Node
+                    - Runtime
+                    - Version
             Content:
                 S3Bucket: !Sub [
                     "${x0}${x1}", {
@@ -888,7 +929,10 @@ Resources:
                 }
             ]
             CompatibleRuntimes:
-                - nodejs14.x
+                - !FindInMap
+                    - Node
+                    - Runtime
+                    - Version
             Content:
                 S3Bucket: !GetAtt CodeBuildFFmpegStack.Outputs.FFmpegLayerBucket
                 S3Key: !GetAtt CodeBuildFFmpegStack.Outputs.FFmpegLayerKey
@@ -903,73 +947,60 @@ Resources:
             ]
             LicenseInfo: LGPL-v2.1
 
-    CanvasLayer:
+    JimpLayer:
         Type: AWS::Lambda::LayerVersion
         Properties:
-            LayerName: !Sub [
-                "${x0}-${x1}-layer-canvas", {
-                    x0: !FindInMap [
-                        "Solution",
-                        "Project",
-                        "LowerCaseId"
-                    ],
-                    x1: !Select [
-                        4,
-                        !Split [
-                            "-",
-                            !Select [
-                                2,
-                                !Split [
-                                    "/",
-                                    !Sub "${AWS::StackId}"
-                                ]
-                            ]
-                        ]
-                    ]
-                }
-            ]
+            LayerName: !Sub
+                - ${solutionId}-${guid}-layer-jimp
+                -
+                    solutionId: !FindInMap
+                        - Solution
+                        - Project
+                        - LowerCaseId
+                    guid: !Select
+                        - 4
+                        - !Split
+                            - "-"
+                            - !Select
+                                - 2
+                                - !Split
+                                    - "/"
+                                    - !Ref AWS::StackId
             CompatibleRuntimes:
-                - nodejs14.x
+                - !FindInMap
+                    - Node
+                    - Runtime
+                    - Version
             Content:
-                S3Bucket: !Sub [
-                    "${x0}${x1}", {
-                        x0: !FindInMap [
-                            "Solution",
-                            "Template",
-                            "S3Bucket"
-                        ],
-                        x1: !If [
-                            bSingleRegion,
-                            "",
-                            !Sub "-${AWS::Region}"
-                        ]
-                    }
-                ]
-                S3Key: !Sub [
-                    "${x0}/${x1}", {
-                        x0: !FindInMap [
-                            "Solution",
-                            "Template",
-                            "KeyPrefix"
-                        ],
-                        x1: !FindInMap [
-                            "Solution",
-                            "Layer",
-                            "Canvas"
-                        ]
-                    }
-                ]
-            Description: !Sub [
-                "${x0} ${AWS::StackName} canvas layer", {
-                    x0: !FindInMap [
-                        "Solution",
-                        "Project",
-                        "LowerCaseId"
-                    ]
-                }
-            ]
+                S3Bucket: !Sub
+                    - ${bucket}${region}
+                    -
+                        bucket: !FindInMap
+                            - Solution
+                            - Template
+                            - S3Bucket
+                        region: !If
+                            - bSingleRegion
+                            - ""
+                            - !Sub "-${AWS::Region}"
+                S3Key: !Sub
+                    - ${keyPrefix}/${package}
+                    -
+                        keyPrefix: !FindInMap
+                            - Solution
+                            - Template
+                            - KeyPrefix
+                        package: !FindInMap
+                            - Solution
+                            - Layer
+                            - JimpLib
+            Description: !Sub
+                - (${solutionId}) JIMP layer
+                - solutionId: !FindInMap
+                    - Solution
+                    - Project
+                    - LowerCaseId
             LicenseInfo: MIT
-
 
     ################################################################################
     #
@@ -1366,6 +1397,12 @@ Resources:
 
     ModelTimerStreamLogGroup:
         Type: AWS::Logs::LogGroup
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W84
+                        reason: Use default encryption. Disable additional KMS encryption requirement. https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/encrypt-log-data-kms.html
         Properties:
             LogGroupName: !Sub [
                 "/aws/lambda/${x0}-${x1}-${x2}", {
@@ -1460,6 +1497,15 @@ Resources:
 
     ModelTimerStreamLambda:
         Type: AWS::Lambda::Function
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W89
+                        reason: Workflow not using VPC
+                    -
+                        id: W92
+                        reason: Workflow not limiting simultaneous executions
         Properties:
             FunctionName: !Sub [
                 "${x0}-${x1}-${x2}", {
@@ -1560,6 +1606,12 @@ Resources:
 
     CustomLabelsLogGroup:
         Type: AWS::Logs::LogGroup
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W84
+                        reason: Use default encryption. Disable additional KMS encryption requirement. https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/encrypt-log-data-kms.html
         Properties:
             LogGroupName: !Sub [
                 "/aws/lambda/${x0}-${x1}-${x2}", {
@@ -1706,6 +1758,15 @@ Resources:
 
     CustomLabelsLambda:
         Type: AWS::Lambda::Function
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W89
+                        reason: Workflow not using VPC
+                    -
+                        id: W92
+                        reason: Workflow not limiting simultaneous executions
         Properties:
             FunctionName: !Sub [
                 "${x0}-${x1}-${x2}", {
@@ -2313,6 +2374,12 @@ Resources:
 
     GTLabelingJobLogGroup:
         Type: AWS::Logs::LogGroup
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W84
+                        reason: Use default encryption. Disable additional KMS encryption requirement. https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/encrypt-log-data-kms.html
         Properties:
             LogGroupName: !Sub [
                 "/aws/lambda/${x0}-${x1}-${x2}", {
@@ -2440,6 +2507,15 @@ Resources:
 
     GTLabelingJobLambda:
         Type: AWS::Lambda::Function
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W89
+                        reason: Workflow not using VPC
+                    -
+                        id: W92
+                        reason: Workflow not limiting simultaneous executions
         Properties:
             FunctionName: !Sub [
                 "${x0}-${x1}-${x2}", {
@@ -2519,7 +2595,7 @@ Resources:
                 - !Ref AwsSdkLayer
                 - !Ref CoreLibLayer
                 - !Ref FFmpegLayer
-                - !Ref CanvasLayer
+                - !Ref JimpLayer
             Environment:
                 Variables:
                     ENV_SOLUTION_UUID: !Select [
@@ -2885,6 +2961,12 @@ Resources:
     ## Image analysis state machine resources
     ImageAnalysisLogGroup:
         Type: AWS::Logs::LogGroup
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W84
+                        reason: Use default encryption. Disable additional KMS encryption requirement. https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/encrypt-log-data-kms.html
         Properties:
             LogGroupName: !Sub [
                 "/aws/lambda/${x0}-${x1}-${x2}", {
@@ -2997,6 +3079,15 @@ Resources:
 
     ImageAnalysisLambda:
         Type: AWS::Lambda::Function
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W89
+                        reason: Workflow not using VPC
+                    -
+                        id: W92
+                        reason: Workflow not limiting simultaneous executions
         Properties:
             FunctionName: !Sub [
                 "${x0}-${x1}-${x2}", {
@@ -3164,6 +3255,12 @@ Resources:
     ## Video analysis state machine resources
     VideoAnalysisLogGroup:
         Type: AWS::Logs::LogGroup
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W84
+                        reason: Use default encryption. Disable additional KMS encryption requirement. https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/encrypt-log-data-kms.html
         Properties:
             LogGroupName: !Sub [
                 "/aws/lambda/${x0}-${x1}-${x2}", {
@@ -3276,6 +3373,15 @@ Resources:
 
     VideoAnalysisLambda:
         Type: AWS::Lambda::Function
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W89
+                        reason: Workflow not using VPC
+                    -
+                        id: W92
+                        reason: Workflow not limiting simultaneous executions
         Properties:
             FunctionName: !Sub [
                 "${x0}-${x1}-${x2}", {
@@ -3355,7 +3461,7 @@ Resources:
                 - !Ref CoreLibLayer
                 - !Ref AwsSdkLayer
                 - !Ref FFmpegLayer
-                - !Ref CanvasLayer
+                - !Ref JimpLayer
             Environment:
                 Variables:
                     ENV_SOLUTION_UUID: !Select [
@@ -3616,6 +3722,12 @@ Resources:
     ## Analysis state machine resources
     AnalysisLogGroup:
         Type: AWS::Logs::LogGroup
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W84
+                        reason: Use default encryption. Disable additional KMS encryption requirement. https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/encrypt-log-data-kms.html
         Properties:
             LogGroupName: !Sub [
                 "/aws/lambda/${x0}-${x1}-${x2}", {
@@ -3696,6 +3808,15 @@ Resources:
 
     AnalysisLambda:
         Type: AWS::Lambda::Function
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W89
+                        reason: Workflow not using VPC
+                    -
+                        id: W92
+                        reason: Workflow not limiting simultaneous executions
         Properties:
             FunctionName: !Sub [
                 "${x0}-${x1}-${x2}", {
@@ -3773,6 +3894,7 @@ Resources:
                 ]
             Layers:
                 - !Ref CoreLibLayer
+                - !Ref AwsSdkLayer
             Environment:
                 Variables:
                     ENV_SOLUTION_UUID: !Select [
@@ -4030,6 +4152,12 @@ Resources:
     ################################################################################
     StateUpdaterLogGroup:
         Type: AWS::Logs::LogGroup
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W84
+                        reason: Use default encryption. Disable additional KMS encryption requirement. https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/encrypt-log-data-kms.html
         Properties:
             LogGroupName: !Sub [
                 "/aws/lambda/${x0}-${x1}-${x2}", {
@@ -4131,6 +4259,15 @@ Resources:
 
     StatusUpdaterLambda:
         Type: AWS::Lambda::Function
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    -
+                        id: W89
+                        reason: Workflow not using VPC
+                    -
+                        id: W92
+                        reason: Workflow not limiting simultaneous executions
         Properties:
             FunctionName: !Sub [
                 "${x0}-${x1}-${x2}", {

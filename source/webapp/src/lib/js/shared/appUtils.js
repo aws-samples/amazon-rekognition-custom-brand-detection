@@ -75,7 +75,11 @@ export default class AppUtils extends mxReadable(class {}) {
   }
 
   static async pause(duration = 0) {
-    return new Promise(resolve => setTimeout(() => resolve(), duration));
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, duration);
+    });
   }
 
   static uuid4(str) {

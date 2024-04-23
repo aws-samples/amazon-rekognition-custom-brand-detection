@@ -107,12 +107,11 @@ ___
 
 The solution is deployed using an AWS CloudFormation template with AWS Lambda backed custom resources. To deploy the solution, use one of the following CloudFormation templates and follows the instructions.
 
-| AWS Region | AWS CloudFormation Template URL |
-|:-----------|:----------------------------|
-| EU (Ireland) |<a href="https://console.aws.amazon.com/cloudformation/home?region=eu-west-1#stacks/create/review?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-eu-west-1.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
-| US East (N. Virginia) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#stacks/create/review?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-us-east-1.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
-| US East (Ohio) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-2#stacks/create/review?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-us-east-2.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
-| US West (Oregon) |<a href="https://console.aws.amazon.com/cloudformation/home?region=us-west-2#stacks/create/review?stackName=custom-brand-detection&templateURL=https%3A%2F%2Fmediaent-solution-us-west-2.s3.amazonaws.com%2Fcustom-brand-detection%2Flatest%2Famazon-rekognition-custom-brand-detection.template" target="_blank">Launch stack</a> |
+|Region|1-click Quick Deploy|Template URL|
+|:--|:--|:--|
+|US East (N. Virginia)|<a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/quickcreate?templateURL=https://awsi-megs-guidances-us-east-1.s3.amazonaws.com/custom-brand-detection/latest/amazon-rekognition-custom-brand-detection.template&stackName=custom-brand" target="_blank">Launch stack</a>|https://awsi-megs-guidances-us-east-1.s3.amazonaws.com/custom-brand-detection/latest/amazon-rekognition-custom-brand-detection.template|
+|US West (Oregon)|<a href="https://console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/quickcreate?templateURL=https://awsi-megs-guidances-us-west-2.s3.us-west-2.amazonaws.com/custom-brand-detection/latest/amazon-rekognition-custom-brand-detection.template&stackName=custom-brand" target="_blank">Launch stack</a>|https://awsi-megs-guidances-us-west-2.s3.us-west-2.amazonaws.com/custom-brand-detection/latest/amazon-rekognition-custom-brand-detection.template|
+|Europe (Ireland)|<a href="https://console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/quickcreate?templateURL=https://awsi-megs-guidances-eu-west-1.s3.eu-west-1.amazonaws.com/custom-brand-detection/latest/amazon-rekognition-custom-brand-detection.template&stackName=custom-brand" target="_blank">Launch stack</a>|https://awsi-megs-guidances-eu-west-1.s3.eu-west-1.amazonaws.com/custom-brand-detection/latest/amazon-rekognition-custom-brand-detection.template|
 
 
 * Under **Create stack** page, click **Next** to continue

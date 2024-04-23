@@ -1,16 +1,17 @@
 {
-  "name": "aws-sdk-layer",
-  "version": "1.0.0",
-  "description": "(Custom Brand Detection) aws-sdk layer",
+  "name": "jimp-layer",
+  "version": "0.22.7",
+  "description": "lambda layer of Jimp packages",
   "main": "index.js",
   "private": true,
   "author": "aws-megs-specialists",
+  "license": "MIT",
   "dependencies": {
-    "aws-sdk": "^2.1604.0"
+    "jimp": "^0.22.12"
   },
   "scripts": {
     "pretest": "npm install",
-    "test": "echo \"layer wrapping latest aws-sdk, skipping unit test.\"",
+    "test": "echo \"layer wrapping jimp packages, skipping unit test.\"",
     "build:clean": "rm -rf dist && mkdir -p dist/nodejs",
     "build:copy": "cp -rv package.json dist/nodejs",
     "build:install": "cd dist/nodejs && npm install --omit=dev",

@@ -242,7 +242,7 @@ The code is structured by its state names under [source/gt-labeling/states/](./s
 | shared/ | shared components for this state machine |
 
 
-The state machine lambda function also uses numbers of AWS Lambda Layers, (1) core-lib which contains common utility classes shared across other components of the solution, (2) FFmpeg layer which helps to probe video and extract frames, (3) Canvas layer to resize and create sprite images, and (4) Latest AWS SDK layer.
+The state machine lambda function also uses numbers of AWS Lambda Layers, (1) core-lib which contains common utility classes shared across other components of the solution, (2) FFmpeg layer which helps to probe video and extract frames, (3) Jimp layer to resize and create sprite images, and (4) Latest AWS SDK layer.
 
 ___
 
